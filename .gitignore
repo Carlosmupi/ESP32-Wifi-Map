@@ -1,0 +1,9 @@
+# PlatformIO build output
+.pio
+
+# Python tooling caches
+__pycache__/
+*.pyc
+
+# Captured Wi-Fi logs and generated plots (produced by capture.py / heatmap.py)
+logs/
