@@ -1,0 +1,23 @@
+[project]
+name = "wifi-scanner-signal-map"
+version = "0.1.0"
+description = "ESP32 Wi-Fi scanner signal map: capture RSSI samples over serial and render heatmaps."
+requires-python = ">=3.10"
+dependencies = [
+    "pyserial>=3.5",
+    "pandas>=2",
+    "matplotlib>=3.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "pytest-cov",
+]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["capture", "heatmap"]
