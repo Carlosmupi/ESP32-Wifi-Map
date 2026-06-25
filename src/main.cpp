@@ -91,7 +91,9 @@ bool readSerialLabel() {
     }
     copyLabel(g_spot_label, sizeof(g_spot_label), line.c_str());
     ledAckBlink();
-    Serial.printf("# label=\"%s\"\n", g_spot_label);
+    char* label_esc = csvEscape(g_spot_label);
+    Serial.printf("# label=%s\n", label_esc);
+    free(label_esc);
     Serial.flush();
     return true;
 }
@@ -138,11 +140,12 @@ void printApRow(uint16_t spot_id, const char* spot_label, uint32_t ts_ms,
     const uint8_t auth      = WiFi.encryptionType(index);
     const char*   auth_str  = authModeString(auth);
     const float   dist_m    = rssiToDistance(rssi);
+    char*         label_esc = csvEscape(spot_label);
     char*         ssid_esc  = csvEscape(ssid.c_str());
 
     Serial.printf("%u,%s,%lu,%s,%s,%ld,%ld,%s,%.2f\n",
                   static_cast<unsigned>(spot_id),
-                  spot_label,
+                  label_esc,
                   static_cast<unsigned long>(ts_ms),
                   ssid_esc,
                   bssid.c_str(),
@@ -150,7 +153,9 @@ void printApRow(uint16_t spot_id, const char* spot_label, uint32_t ts_ms,
                   static_cast<long>(channel),
                   auth_str,
                   static_cast<double>(dist_m));
+    free(label_esc);
     free(ssid_esc);
+
 }
 
 // Run one scan at the current spot and emit CSV rows to serial.
@@ -167,10 +172,12 @@ void logCurrentSpot() {
     const uint32_t stamp_ms   = millis();
 
     if (n <= 0) {
+        char* label_esc = csvEscape(g_spot_label);
         Serial.printf("# spot=%u label=%s ap_count=0 scan_ms=%lu\n",
                       static_cast<unsigned>(spot_id),
-                      g_spot_label,
+                      label_esc,
                       static_cast<unsigned long>(millis() - scan_start));
+        free(label_esc);
         Serial.flush();
         ledOff();
         ++g_spot_id;
@@ -183,13 +190,14 @@ void logCurrentSpot() {
     }
     Serial.flush();
 
-    WiFi.scanDelete();
-
+    char* label_esc = csvEscape(g_spot_label);
     Serial.printf("# spot=%u label=%s ap_count=%d scan_ms=%lu\n",
                   static_cast<unsigned>(spot_id),
-                  g_spot_label,
+                  label_esc,
                   n,
                   static_cast<unsigned long>(millis() - scan_start));
+    free(label_esc);
+
     Serial.flush();
 
     ledOff();
