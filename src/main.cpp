@@ -84,7 +84,12 @@ uint16_t    g_spot_id                             = 0;
 // probe-request sniffing via `!promisc on`. The sniffer callback and
 // logCurrentSpot() both consult this flag so an active scan can briefly
 // suspend promiscuous mode without losing the user's intent across scans.
-bool        g_promisc_on = false;
+bool        g_promisc_on      = false;
+// True while logCurrentSpot() is mid-scan. Guards against re-entry from
+// `!scan` or the `!monitor` background loop (issue #1's monitor-mode
+// extension: a `!scan` triggered while the radio is already busy is
+// silently dropped, and the monitor loop skips its tick).
+bool        g_scan_in_flight  = false;
 
 
 inline void ledOn()  { digitalWrite(LED_PIN, LED_ACTIVE_LOW ? LOW  : HIGH); }
@@ -94,6 +99,8 @@ inline void ledOff() { digitalWrite(LED_PIN, LED_ACTIVE_LOW ? HIGH : LOW ); }
 // mode helpers (issue #1) that are defined further down in this file.
 void snifferCallback(void* buf, wifi_promiscuous_pkt_type_t type);
 void setPromiscuousFilter();
+// Forward-declared so handleCommand() (above) can call !scan -> logCurrentSpot().
+void logCurrentSpot();
 
 // Brief single blink (100 ms on / 100 ms off) for label acknowledgement.
 inline void ledAckBlink() {
@@ -257,6 +264,19 @@ bool handleCommand(char* line) {
                               static_cast<unsigned>(i),
                               g_ignored_ssids[i]);
             }
+        }
+        Serial.flush();
+        return true;
+    }
+
+    if (strcmp(cmd, "!scan") == 0) {
+        // Trigger a scan on demand. If a scan is already running, the
+        // call is silently dropped to avoid re-entry (monitor mode).
+        if (g_scan_in_flight) {
+            Serial.println(F("# scan: busy"));
+        } else {
+            Serial.println(F("# scan: triggered"));
+            logCurrentSpot();
         }
         Serial.flush();
         return true;
@@ -475,6 +495,7 @@ void printApRow(uint16_t spot_id, const char* spot_label, uint32_t ts_ms,
 // Run one scan at the current spot and emit CSV rows to serial.
 void logCurrentSpot() {
     ledOn();
+    g_scan_in_flight = true;
     const uint32_t scan_start = millis();
     esp_task_wdt_reset();
 
@@ -510,6 +531,7 @@ void logCurrentSpot() {
         ++g_spot_id;
         esp_task_wdt_reset();
         ledConfirmBlinks();
+        g_scan_in_flight = false;
         return;
     }
 
@@ -561,6 +583,7 @@ void logCurrentSpot() {
     ++g_spot_id;
     ledConfirmBlinks();
     esp_task_wdt_reset();
+    g_scan_in_flight = false;
 }
 
 }  // namespace
