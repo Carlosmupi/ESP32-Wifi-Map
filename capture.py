@@ -17,6 +17,7 @@ Dependencies:
 
 import argparse
 import csv
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -54,13 +55,49 @@ def timestamped_path() -> Path:
     return OUTPUT_DIR / f"signal_map_{ts}.csv"
 
 
+def _tmp_path(path: Path) -> Path:
+    """Sibling tmp file path used for atomic writes (e.g. `out.csv` -> `out.csv.tmp`)."""
+    return path.with_suffix(path.suffix + ".tmp")
+
+
+def _cleanup_tmp(tmp: Path) -> None:
+    """Best-effort delete of a tmp file; never raises."""
+    try:
+        tmp.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+
+
 def write_header(path: Path) -> None:
-    with path.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=list(EXPECTED_COLUMNS))
-        writer.writeheader()
+    """Atomically write the CSV header.
+
+    Writes to ``path.with_suffix(path.suffix + ".tmp")`` first, then uses
+    ``os.replace`` to swap. On any exception, the tmp file is best-effort
+    cleaned up and the original error is re-raised. After a successful
+    call, no ``.tmp`` file is left behind.
+    """
+    tmp = _tmp_path(path)
+    try:
+        with tmp.open("w", newline="", encoding="utf-8") as fh:
+            writer = csv.DictWriter(fh, fieldnames=list(EXPECTED_COLUMNS))
+            writer.writeheader()
+        os.replace(tmp, path)
+    except Exception:
+        _cleanup_tmp(tmp)
+        raise
 
 
 def append_rows(path: Path, rows: list[dict]) -> None:
+    """Append rows to an existing CSV file.
+
+    The header write (see :func:`write_header`) is fully atomic via
+    tmp+rename. Subsequent appends use plain append mode, which is atomic
+    enough for our scale (small writes, single writer, no concurrent
+    readers) and avoids the quadratic cost of rewriting the whole file on
+    every spot.
+    """
     with path.open("a", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=list(EXPECTED_COLUMNS))
         for row in rows:
