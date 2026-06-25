@@ -183,6 +183,26 @@ class TestSummary:
         # strongest_rssi sorted descending — loud first.
         assert list(s.index) == ["loud", "mid", "weak"]
 
+    def test_summarise_on_reindexed_dataframe(self):
+        """Regression: summarise() must not rely on closure over the outer df.
+
+        The previous implementation looked up ``df.loc[s.index, ...]``
+        inside a lambda passed to ``.agg()``. The refactored version
+        iterates the groupby directly so the per-group lookup uses only
+        the group's own rows, independent of the caller's index. We
+        exercise this by handing summarise() a DataFrame whose index
+        is non-contiguous and not zero-based.
+        """
+        df = make_df([
+            make_row(ssid="A", spot_label="far", rssi=-50, est_distance_m=8.0),
+            make_row(ssid="A", spot_label="near", rssi=-50, est_distance_m=1.0),
+            make_row(ssid="A", spot_label="mid", rssi=-50, est_distance_m=4.0),
+        ])
+        df.index = [10, 20, 30]
+        s = heatmap.summarise(df)
+        assert s.loc["A", "closest_spot"] == "near"
+        assert s.loc["A", "closest_m"] == 1.0
+
 
 # ---------------------------------------------------------------------------
 # Numeric coercion (post-#5)

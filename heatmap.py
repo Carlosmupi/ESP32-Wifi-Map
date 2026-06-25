@@ -93,18 +93,25 @@ def summarise(df: pd.DataFrame) -> pd.DataFrame:
     Tie-breaking follows pandas ``idxmin`` behaviour: the first-encountered
     minimum wins.  Sorted by strongest RSSI descending.
     """
-    return (
-        df.groupby("ssid")
-        .agg(
-            spots=("spot_label", "nunique"),
-            strongest_rssi=("rssi", "max"),
-            closest_m=("est_distance_m", "min"),
-            closest_spot=("spot_label",
-                          lambda s: s.loc[df.loc[s.index,
-                                                 "est_distance_m"].idxmin()]),
-        )
-        .sort_values("strongest_rssi", ascending=False)
+    grouped = df.groupby("ssid")
+
+    agg = grouped.agg(
+        spots=("spot_label", "nunique"),
+        strongest_rssi=("rssi", "max"),
+        closest_m=("est_distance_m", "min"),
     )
+    # Pick the spot_label of the row with the minimum est_distance_m in
+    # each group. idxmin() returns the first occurrence on ties, matching
+    # the previous lambda-based behaviour. Done outside .agg() so the
+    # lookup uses only the group's own data, with no closure over the
+    # outer DataFrame (the prior implementation coupled the aggregation
+    # to the caller's index structure and would break if pandas reset
+    # the per-group Series index when invoking a custom agg lambda).
+    agg["closest_spot"] = [
+        g.loc[g["est_distance_m"].idxmin(), "spot_label"]
+        for _, g in grouped
+    ]
+    return agg.sort_values("strongest_rssi", ascending=False)
 
 
 def validate_required_columns(df: pd.DataFrame) -> None:
@@ -169,7 +176,7 @@ def merge_coords(df: pd.DataFrame, coords: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _draw_scatter(ax, sub: pd.DataFrame) -> None:
+def _draw_scatter(ax: "matplotlib.axes.Axes", sub: pd.DataFrame) -> None:
     """Draw a scatter heatmap onto an existing axes for one SSID's rows."""
     sc = ax.scatter(
         sub["x"], sub["y"],
@@ -192,7 +199,7 @@ def _draw_scatter(ax, sub: pd.DataFrame) -> None:
     cb.set_label("RSSI (dBm)")
 
 
-def _draw_bar(ax, sub: pd.DataFrame) -> None:
+def _draw_bar(ax: "matplotlib.axes.Axes", sub: pd.DataFrame) -> None:
     """Draw a horizontal bar chart onto an existing axes for one SSID's rows."""
     sub = sub.sort_values("rssi", ascending=False)
     bars = ax.barh(sub["spot_label"], sub["rssi"],
