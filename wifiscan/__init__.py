@@ -10,4 +10,4 @@ See :mod:`wifiscan.schema` for the canonical column list, header string,
 row/footer parsers, and ``safe_fieldname``.
 """
 
-__all__ = ["schema"]
+__all__ = ["schema", "merge"]
