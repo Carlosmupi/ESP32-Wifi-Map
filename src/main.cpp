@@ -25,6 +25,7 @@
  */
 
 #include "wifi_scan_util.h"
+#include "debounced_button.h"
 
 #include <Arduino.h>
 #include <WiFi.h>
@@ -55,10 +56,6 @@ constexpr uint8_t  SCAN_CHANNEL         = 0;  // 0 = scan every 2.4 GHz channel.
 char        g_spot_label[SPOT_LABEL_MAX_LEN + 1] = "default";
 uint16_t    g_spot_id                             = 0;
 
-// Button debounce state.
-int         g_last_raw_button      = HIGH;
-int         g_last_stable_button   = HIGH;
-uint32_t    g_last_debounce_ms     = 0;
 
 inline void ledOn()  { digitalWrite(LED_PIN, LED_ACTIVE_LOW ? LOW  : HIGH); }
 inline void ledOff() { digitalWrite(LED_PIN, LED_ACTIVE_LOW ? HIGH : LOW ); }
@@ -116,37 +113,6 @@ bool readSerialLabel() {
     return true;
 }
 
-// Debounced button-edge detector. Returns true once per HIGH->LOW transition.
-bool pollButtonPress() {
-    const uint32_t now_ms = millis();
-    const int raw = digitalRead(BUTTON_PIN);
-
-    if (raw != g_last_raw_button) {
-        g_last_raw_button   = raw;
-        g_last_debounce_ms  = now_ms;
-    }
-
-    if ((now_ms - g_last_debounce_ms) >= BUTTON_DEBOUNCE_MS) {
-        if (raw != g_last_stable_button) {
-            const bool was_high = (g_last_stable_button == HIGH);
-            g_last_stable_button = raw;
-            if (raw == LOW && was_high) {
-                // Wait until the button is released before arming another press.
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
-// Wait until the button is released so we don't re-trigger on one hold.
-void waitForButtonRelease() {
-    while (digitalRead(BUTTON_PIN) == LOW) {
-        delay(10);
-    }
-    g_last_raw_button    = HIGH;
-    g_last_stable_button = HIGH;
-}
 
 // Print one CSV row for a single AP. Performs SSID escaping and distance.
 void printApRow(uint16_t spot_id, const char* spot_label, uint32_t ts_ms,
@@ -262,11 +228,18 @@ void setup() {
 }
 
 void loop() {
+    // Static locals keep the button state across loop iterations and
+    // give the references a stable address so DebouncedButton can hold
+    // Clock& / Pin& without dangling.
+    static ArduinoClock     clock;
+    static ArduinoPin       button_pin(BUTTON_PIN);
+    static DebouncedButton  boot(button_pin, clock, BUTTON_DEBOUNCE_MS);
+
     readSerialLabel();
 
-    if (pollButtonPress()) {
+    if (boot.pressed()) {
         logCurrentSpot();
-        waitForButtonRelease();
+        boot.wait_release();
     }
 
     delay(10);
