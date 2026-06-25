@@ -2,6 +2,10 @@
 
 > Bare-PCB project for the Freenove ESP32 WROVER: walk around your space, press BOOT at each spot, and get a per-AP signal-strength map.
 
+## CI
+
+[![CI](https://github.com/Carlosmupi/ESP32-Wifi-Map/actions/workflows/ci.yml/badge.svg)](https://github.com/Carlosmupi/ESP32-Wifi-Map/actions/workflows/ci.yml)
+
 ## Concept
 
 The ESP32 scans every nearby access point across all 2.4 GHz channels, tags each reading with the current spot label and an auto-incrementing spot ID, and streams the result as CSV over USB serial. A Python script captures the live CSV to disk; a second script renders per-SSID signal-strength heatmaps. The `est_distance_m` column is a rough path-loss estimate (`exp((-RSSI - 45) / 20)` capped at 10 m) — useful for relative comparison, not absolute distance.
