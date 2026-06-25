@@ -164,7 +164,7 @@ bool readSerialLabel() {
     }
     copyLabel(line);
     ledAckBlink();
-    Serial.printf("# label=\"%s\"\n", g_spot_label);
+    Serial.printf("# label=%s\n", csvEscape(String(g_spot_label)).c_str());
     Serial.flush();
     return true;
 }
@@ -211,11 +211,12 @@ void printApRow(uint16_t spot_id, const char* spot_label, uint32_t ts_ms,
     const uint8_t auth      = WiFi.encryptionType(index);
     const char*   auth_str  = authModeString(auth);
     const float   dist_m    = rssiToDistance(rssi);
+    const String  label_esc = csvEscape(String(spot_label));
     const String  ssid_esc  = csvEscape(ssid);
 
     Serial.printf("%u,%s,%lu,%s,%s,%ld,%ld,%s,%.2f\n",
                   static_cast<unsigned>(spot_id),
-                  spot_label,
+                  label_esc.c_str(),
                   static_cast<unsigned long>(ts_ms),
                   ssid_esc.c_str(),
                   bssid.c_str(),
@@ -241,7 +242,7 @@ void logCurrentSpot() {
     if (n <= 0) {
         Serial.printf("# spot=%u label=%s ap_count=0 scan_ms=%lu\n",
                       static_cast<unsigned>(spot_id),
-                      g_spot_label,
+                      csvEscape(String(g_spot_label)).c_str(),
                       static_cast<unsigned long>(millis() - scan_start));
         Serial.flush();
         ledOff();
@@ -259,7 +260,7 @@ void logCurrentSpot() {
 
     Serial.printf("# spot=%u label=%s ap_count=%d scan_ms=%lu\n",
                   static_cast<unsigned>(spot_id),
-                  g_spot_label,
+                      csvEscape(String(g_spot_label)).c_str(),
                   n,
                   static_cast<unsigned long>(millis() - scan_start));
     Serial.flush();
