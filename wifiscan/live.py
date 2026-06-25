@@ -67,73 +67,87 @@ HTML_PAGE: str = r"""<!DOCTYPE html>
 <title>ESP32 Wi-Fi Radar</title>
 <style>
   :root {
-    --primary: #0f0c29;
-    --secondary: #302b63;
-    --accent: #00c9ff;
-    --text: #e6f1ff;
-    --ap-color: #ff9800;
-    --probe-color: #92fe9d;
+    --phosphor: #00ff41;
+    --phosphor-dim: rgba(0,255,65,0.15);
+    --amber: #ffb000;
+    --amber-dim: rgba(255,176,0,0.3);
+    --bg: #0a0e0a;
+    --panel-bg: rgba(0,20,0,0.6);
+    --text-dim: rgba(0,255,65,0.5);
   }
   * { box-sizing: border-box; }
   body {
-    background: linear-gradient(135deg, var(--primary), var(--secondary));
-    color: var(--text);
-    font-family: 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--phosphor);
+    font-family: 'Consolas', 'Courier New', monospace;
     margin: 0; padding: 16px; height: 100vh; overflow: hidden;
+    text-shadow: 0 0 4px rgba(0,255,65,0.4);
   }
   .container { max-width: 1200px; margin: 0 auto; height: 100%;
     display: flex; flex-direction: column; }
   header { text-align: center; padding: 8px 0; }
-  h1 { font-size: 2rem; margin: 0;
-    background: linear-gradient(90deg, var(--accent), var(--probe-color));
-    -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-  .dashboard { display: flex; flex: 1; gap: 20px; min-height: 0; }
-  .radar-container { flex: 3; background: rgba(0,0,0,0.25);
-    border-radius: 16px; border: 1px solid rgba(255,255,255,0.1);
-    overflow: hidden; position: relative; }
-  #radar { width: 100%; height: 100%; display: block; }
-  .side-panel { flex: 1; display: flex; flex-direction: column; gap: 16px;
-    min-width: 260px; }
-  .panel { background: rgba(0,0,0,0.25); border-radius: 16px; padding: 14px;
-    border: 1px solid rgba(255,255,255,0.1); overflow-y: auto; }
-  .panel h2 { font-size: 1rem; margin: 0 0 10px; color: var(--accent); }
-  .device-card, .ap-card {
-    background: rgba(255,255,255,0.06); border-radius: 8px; padding: 10px;
-    margin-bottom: 8px; animation: fadeIn .3s;
+  h1 { font-size: 1.8rem; margin: 0; letter-spacing: 4px; text-transform: uppercase;
+    color: var(--phosphor); text-shadow: 0 0 8px rgba(0,255,65,0.6); }
+  .status-line { font-size: .8rem; letter-spacing: 1px; margin: 4px 0 0; }
+  .dashboard { display: flex; flex: 1; gap: 16px; min-height: 0; }
+  .radar-container { flex: 3; background: rgba(0,8,0,0.5);
+    border: 1px solid var(--phosphor-dim); border-radius: 4px;
+    overflow: hidden; position: relative;
+    box-shadow: 0 0 20px rgba(0,255,65,0.05) inset; }
+  .radar-container::after {
+    content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    background: repeating-linear-gradient(0deg,
+      rgba(0,0,0,0) 0px, rgba(0,0,0,0) 2px,
+      rgba(0,0,0,0.15) 3px, rgba(0,0,0,0.15) 3px);
+    pointer-events: none; z-index: 1;
   }
-  .ap-card { border-left: 3px solid var(--ap-color); }
-  .device-card { border-left: 3px solid var(--probe-color); }
-  @keyframes fadeIn { from { opacity:0; transform: translateY(6px); } to { opacity:1; } }
-  .card-title { font-size: .85rem; font-weight: 600; margin: 0 0 4px;
-    word-break: break-all; }
-  .card-meta { font-size: .75rem; color: rgba(255,255,255,0.6); margin: 0; }
-  .signal-bar { height: 4px; background: rgba(255,255,255,0.1);
-    border-radius: 2px; margin-top: 6px; overflow: hidden; }
-  .signal-level { height: 100%; border-radius: 2px; }
-  .signal-level.probe { background: linear-gradient(90deg, var(--accent), var(--probe-color)); }
-  .signal-level.ap { background: linear-gradient(90deg, var(--accent), var(--ap-color)); }
-  footer { text-align: center; padding: 8px; font-size: .75rem;
-    color: rgba(255,255,255,0.4); }
+  #radar { width: 100%; height: 100%; display: block; }
+  .side-panel { flex: 1; display: flex; flex-direction: column; gap: 12px;
+    min-width: 260px; }
+  .panel { background: var(--panel-bg); border-radius: 4px; padding: 12px;
+    border: 1px solid var(--phosphor-dim); overflow-y: auto;
+    box-shadow: 0 0 12px rgba(0,255,65,0.03) inset; }
+  .panel h2 { font-size: .85rem; margin: 0 0 10px; color: var(--phosphor);
+    letter-spacing: 2px; text-transform: uppercase;
+    border-bottom: 1px solid var(--phosphor-dim); padding-bottom: 6px; }
+  .device-card, .ap-card {
+    background: rgba(0,30,0,0.4); border-radius: 2px; padding: 8px;
+    margin-bottom: 6px; animation: fadeIn .3s;
+  }
+  .ap-card { border-left: 2px solid var(--amber); }
+  .device-card { border-left: 2px solid var(--phosphor); }
+  @keyframes fadeIn { from { opacity:0; transform: translateY(4px); } to { opacity:1; } }
+  .card-title { font-size: .8rem; font-weight: bold; margin: 0 0 4px;
+    word-break: break-all; color: var(--phosphor); }
+  .ap-card .card-title { color: var(--amber); }
+  .card-meta { font-size: .7rem; color: var(--text-dim); margin: 0; }
+  .signal-bar { height: 3px; background: rgba(0,255,65,0.08);
+    border-radius: 1px; margin-top: 5px; overflow: hidden; }
+  .signal-level { height: 100%; border-radius: 1px; }
+  .signal-level.probe { background: linear-gradient(90deg, rgba(0,255,65,0.3), var(--phosphor)); }
+  .signal-level.ap { background: linear-gradient(90deg, rgba(255,176,0,0.3), var(--amber)); }
+  footer { text-align: center; padding: 8px; font-size: .7rem;
+    color: var(--text-dim); letter-spacing: 1px; }
   .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
     margin-right: 4px; }
-  .status-dot.connected { background: var(--probe-color); }
-  .status-dot.disconnected { background: #f44; }
+  .status-dot.connected { background: var(--phosphor); box-shadow: 0 0 6px var(--phosphor); }
+  .status-dot.disconnected { background: #f44; box-shadow: 0 0 6px #f44; }
 </style>
 </head>
 <body>
 <div class="container">
   <header>
     <h1>ESP32 Wi-Fi Radar</h1>
-    <p><span id="statusDot" class="status-dot disconnected"></span><span id="statusText">Connecting...</span></p>
+    <p class="status-line"><span id="statusDot" class="status-dot disconnected"></span><span id="statusText">CONNECTING...</span></p>
   </header>
   <div class="dashboard">
     <div class="radar-container"><canvas id="radar"></canvas></div>
     <div class="side-panel">
-      <div class="panel" style="flex:1"><h2>Devices (probe-req)</h2><div id="deviceList"></div></div>
+      <div class="panel" style="flex:1"><h2>Devices / Probe-Req</h2><div id="deviceList"></div></div>
       <div class="panel" style="flex:1"><h2>Access Points</h2><div id="apList"></div></div>
     </div>
   </div>
-  <footer>ESP32 Wi-Fi Signal Map | Live SSE dashboard</footer>
+  <footer>ESP32 WI-FI SIGNAL MAP // LIVE SSE DASHBOARD</footer>
 </div>
 <script>
 const radar = document.getElementById('radar');
@@ -159,6 +173,16 @@ function rssiToStrength(rssi) {
   return Math.max(0, Math.min(100, Math.round((rssi + 95) / 60 * 100)));
 }
 
+// --- Mouse tracking for hover tooltip ---
+let mousePos = null;
+let radarDots = []; // reset each frame: {x, y, type, data}
+
+radar.addEventListener('mousemove', (e) => {
+  const rect = radar.getBoundingClientRect();
+  mousePos = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+});
+radar.addEventListener('mouseleave', () => { mousePos = null; });
+
 function drawRadar() {
   const w = radar.width, h = radar.height;
   const cx = w / 2, cy = h / 2;
@@ -166,16 +190,36 @@ function drawRadar() {
   ctx.clearRect(0, 0, w, h);
 
   // concentric range rings
-  ctx.strokeStyle = 'rgba(0,201,255,0.18)';
+  ctx.strokeStyle = 'rgba(0,255,65,0.12)';
   ctx.lineWidth = 1;
   for (let i = 1; i <= 5; i++) {
     ctx.beginPath(); ctx.arc(cx, cy, radius * i / 5, 0, Math.PI * 2); ctx.stroke();
   }
+  // distance labels (2m, 4m, 6m, 8m, 10m) along horizontal axis
+  ctx.font = '10px Consolas, monospace';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(0,255,65,0.35)';
+  for (let i = 1; i <= 5; i++) {
+    const ringR = radius * i / 5;
+    const label = (i * 2) + 'm';
+    ctx.fillText(label, cx + ringR, cy - 4);
+  }
   // crosshairs
+  ctx.strokeStyle = 'rgba(0,255,65,0.2)';
+  ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(cx, 0); ctx.lineTo(cx, h);
   ctx.moveTo(0, cy); ctx.lineTo(w, cy);
   ctx.stroke();
+  // tick marks on crosshairs
+  for (let i = 1; i <= 5; i++) {
+    const tickR = radius * i / 5;
+    ctx.beginPath(); ctx.moveTo(cx + tickR, cy - 3); ctx.lineTo(cx + tickR, cy + 3);
+    ctx.moveTo(cx - tickR, cy - 3); ctx.lineTo(cx - tickR, cy + 3);
+    ctx.moveTo(cx - 3, cy + tickR); ctx.lineTo(cx + 3, cy + tickR);
+    ctx.moveTo(cx - 3, cy - tickR); ctx.lineTo(cx + 3, cy - tickR);
+    ctx.stroke();
+  }
 
   // sweep line
   const sweepAngle = (Date.now() / 30) % 360;
@@ -183,7 +227,7 @@ function drawRadar() {
   ctx.moveTo(cx, cy);
   ctx.lineTo(cx + radius * Math.cos((sweepAngle - 90) * Math.PI / 180),
              cy + radius * Math.sin((sweepAngle - 90) * Math.PI / 180));
-  ctx.strokeStyle = 'rgba(0,255,100,0.6)';
+  ctx.strokeStyle = 'rgba(0,255,65,0.5)';
   ctx.lineWidth = 2;
   ctx.stroke();
 }
@@ -195,8 +239,6 @@ function drawDeviceDots() {
   const w = radar.width, h = radar.height;
   const cx = w / 2, cy = h / 2;
   const radius = Math.min(cx, cy) * 0.88;
-  ctx.font = '11px Segoe UI, sans-serif';
-  ctx.textAlign = 'center';
   for (const dev of currentDevices) {
     const angle = hashMacToAngle(dev.mac) * Math.PI / 180;
     const dist = radius * Math.min(dev.est_distance_m / 10, 1);
@@ -205,16 +247,14 @@ function drawDeviceDots() {
     const strength = rssiToStrength(dev.rssi);
     // dot
     ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(146,254,157,${strength / 100})`;
+    ctx.fillStyle = `rgba(0,255,65,${strength / 100})`;
     ctx.fill();
     // pulse
     const pulseR = 12 * (1 + Math.sin(Date.now() / 250 + dev.mac.charCodeAt(0)) / 2);
     ctx.beginPath(); ctx.arc(x, y, pulseR, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(0,201,255,0.25)'; ctx.lineWidth = 1.5; ctx.stroke();
-    // label
-    const label = dev.ssid || dev.mac;
-    ctx.fillStyle = 'rgba(230,241,255,0.85)';
-    ctx.fillText(label, x, y - 12);
+    ctx.strokeStyle = 'rgba(0,255,65,0.2)'; ctx.lineWidth = 1.5; ctx.stroke();
+    // register for hover
+    radarDots.push({ x, y, type: 'device', data: dev });
   }
 }
 
@@ -222,8 +262,6 @@ function drawApDots() {
   const w = radar.width, h = radar.height;
   const cx = w / 2, cy = h / 2;
   const radius = Math.min(cx, cy) * 0.88;
-  ctx.font = '11px Segoe UI, sans-serif';
-  ctx.textAlign = 'center';
   for (const ap of currentAps) {
     const angle = hashMacToAngle(ap.bssid || ap.ssid) * Math.PI / 180;
     const dist = radius * Math.min(Number(ap.est_distance_m) / 10, 1);
@@ -232,21 +270,90 @@ function drawApDots() {
     const strength = rssiToStrength(Number(ap.rssi));
     // dot
     ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(255,152,0,${0.4 + strength / 200})`;
+    ctx.fillStyle = `rgba(255,176,0,${0.4 + strength / 200})`;
     ctx.fill();
     // ring
     ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI * 2);
-    ctx.strokeStyle = `rgba(255,152,0,0.3)`; ctx.lineWidth = 1; ctx.stroke();
-    // label
-    const label = ap.ssid || '(hidden)';
-    ctx.fillStyle = 'rgba(255,200,100,0.85)';
-    ctx.fillText(label, x, y - 14);
+    ctx.strokeStyle = 'rgba(255,176,0,0.3)'; ctx.lineWidth = 1; ctx.stroke();
+    // register for hover
+    radarDots.push({ x, y, type: 'ap', data: ap });
+  }
+}
+
+function drawHoverTooltip() {
+  if (!mousePos) return;
+  // find nearest dot within 20px
+  let nearest = null, nearestDist = 20;
+  for (const dot of radarDots) {
+    const dx = dot.x - mousePos.x, dy = dot.y - mousePos.y;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    if (d < nearestDist) { nearestDist = d; nearest = dot; }
+  }
+  if (!nearest) return;
+
+  const w = radar.width, h = radar.height;
+  const cx = w / 2, cy = h / 2;
+  const radius = Math.min(cx, cy) * 0.88;
+
+  // highlight hovered dot
+  ctx.beginPath(); ctx.arc(nearest.x, nearest.y, 14, 0, Math.PI * 2);
+  ctx.strokeStyle = nearest.type === 'ap' ? 'rgba(255,176,0,0.8)' : 'rgba(0,255,65,0.8)';
+  ctx.lineWidth = 2; ctx.stroke();
+
+  // build tooltip lines
+  let lines, color;
+  if (nearest.type === 'ap') {
+    const ap = nearest.data;
+    color = '#ffb000';
+    lines = [
+      ap.ssid || '(hidden)',
+      'BSSID: ' + (ap.bssid || '?'),
+      'CH: ' + (ap.channel || '?') + '  RSSI: ' + ap.rssi + ' dBm',
+      'DIST: ' + Number(ap.est_distance_m).toFixed(1) + ' m',
+      'AUTH: ' + (ap.auth_mode || '?'),
+    ];
+  } else {
+    const dev = nearest.data;
+    color = '#00ff41';
+    lines = [
+      dev.ssid || dev.mac,
+      'MAC: ' + dev.mac,
+      'RSSI: ' + dev.rssi + ' dBm',
+      'DIST: ' + dev.est_distance_m.toFixed(1) + ' m',
+      'CH: ' + (dev.channel || '?'),
+    ];
+  }
+
+  // measure tooltip
+  ctx.font = '11px Consolas, monospace';
+  let maxW = 0;
+  for (const ln of lines) { maxW = Math.max(maxW, ctx.measureText(ln).width); }
+  const padX = 8, padY = 6, lineH = 15;
+  const boxW = maxW + padX * 2;
+  const boxH = lines.length * lineH + padY * 2;
+
+  // position: offset right+down from dot, flip if near edge
+  let bx = nearest.x + 16, by = nearest.y + 16;
+  if (bx + boxW > w) bx = nearest.x - boxW - 16;
+  if (by + boxH > h) by = nearest.y - boxH - 16;
+
+  // tooltip box
+  ctx.fillStyle = 'rgba(0,12,0,0.92)';
+  ctx.fillRect(bx, by, boxW, boxH);
+  ctx.strokeStyle = color; ctx.lineWidth = 1;
+  ctx.strokeRect(bx, by, boxW, boxH);
+
+  // tooltip text
+  ctx.textAlign = 'left';
+  for (let i = 0; i < lines.length; i++) {
+    ctx.fillStyle = i === 0 ? color : 'rgba(0,255,65,0.7)';
+    ctx.fillText(lines[i], bx + padX, by + padY + (i + 1) * lineH - 4);
   }
 }
 
 function updateDeviceCards(devices) {
   if (devices.length === 0) {
-    deviceListEl.innerHTML = '<p class="card-meta">No devices detected</p>';
+    deviceListEl.innerHTML = '<p class="card-meta">NO DEVICES DETECTED</p>';
     return;
   }
   deviceListEl.innerHTML = devices.map(d => {
@@ -274,9 +381,11 @@ function updateApCard(row) {
 }
 
 function animate() {
+  radarDots = [];
   drawRadar();
   drawApDots();
   drawDeviceDots();
+  drawHoverTooltip();
   requestAnimationFrame(animate);
 }
 animate();
@@ -285,11 +394,11 @@ animate();
 const es = new EventSource('/events');
 es.addEventListener('open', () => {
   statusDot.className = 'status-dot connected';
-  statusText.textContent = 'Live';
+  statusText.textContent = 'LIVE';
 });
 es.addEventListener('error', () => {
   statusDot.className = 'status-dot disconnected';
-  statusText.textContent = 'Reconnecting...';
+  statusText.textContent = 'RECONNECTING...';
 });
 es.addEventListener('row', (e) => {
   const row = JSON.parse(e.data);

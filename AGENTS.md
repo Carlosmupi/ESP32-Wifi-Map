@@ -84,3 +84,17 @@ Footer comment that marks a spot boundary:
 1. **CSV schema changes**: Edit `EXPECTED_COLUMNS` in `wifiscan/schema.py`, then bump `SCHEMA_VERSION` (both there and in `src/main.cpp`). Run `python tools/check_schema.py` to verify sync. Regenerate `firmware_header.txt` with `python tools/sync_firmware_header.py`.
 2. **Run tests before committing**: `pio test -e native` (firmware pure functions), `python -m pytest tests/ -q` (Python: capture, heatmap, merge, schema).
 3. **CI**: GitHub Actions runs both test suites on every push/PR to `main` (see `.github/workflows/ci.yml`).
+
+## Agent skills
+
+### Issue tracker
+
+GitHub issues (via `gh` CLI). External PRs are not a triage surface. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Five default labels: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` + `docs/adr/` at the repo root. See `docs/agents/domain.md`.
