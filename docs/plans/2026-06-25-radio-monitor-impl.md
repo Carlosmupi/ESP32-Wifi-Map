@@ -151,7 +151,7 @@ pio test -e native
 
 ```bash
 git add src/wifi_scan_util.h test/test_wifi_scan_util/test_monitor_tick.cpp test/test_wifi_scan_util/test_main.cpp
-git commit -m "test(firmware): add monitorTick unit tests (issue #TBD)"
+git commit -m "test(firmware): add monitorTick unit tests (monitor mode)"
 ```
 
 ---
@@ -181,7 +181,7 @@ git commit -m "test(firmware): add monitorTick unit tests (issue #TBD)"
 ```cpp
     if (strcmp(cmd, "!scan") == 0) {
         // Trigger a scan on demand. If a scan is already running, the
-        // call is silently dropped to avoid re-entry (issue #TBD).
+        // call is silently dropped to avoid re-entry (monitor mode).
         if (g_scan_in_flight) {
             Serial.println(F("# scan: busy"));
         } else {
@@ -213,7 +213,7 @@ pio run
 
 ```bash
 git add src/main.cpp
-git commit -m "feat(firmware): add !scan runtime command (issue #TBD)"
+git commit -m "feat(firmware): add !scan runtime command (monitor mode)"
 ```
 
 ---
@@ -285,7 +285,7 @@ pio run
 
 ```bash
 git add src/main.cpp
-git commit -m "feat(firmware): add !monitor runtime command (issue #TBD)"
+git commit -m "feat(firmware): add !monitor runtime command (monitor mode)"
 ```
 
 ---
@@ -319,7 +319,7 @@ pio run
 
 ```bash
 git add src/main.cpp
-git commit -m "feat(firmware): drive !monitor scans from loop() (issue #TBD)"
+git commit -m "feat(firmware): drive !monitor scans from loop() (monitor mode)"
 ```
 
 ---
@@ -535,7 +535,7 @@ python -m pytest tests/ -q
 
 ```bash
 git add wifiscan/timeseries.py tests/test_timeseries.py
-git commit -m "feat(python): add wifiscan.timeseries.load_timeseries (issue #TBD)"
+git commit -m "feat(python): add wifiscan.timeseries.load_timeseries (monitor mode)"
 ```
 
 ---
@@ -866,7 +866,7 @@ python -m pytest tests/ -q
 
 ```bash
 git add monitor.py tests/test_monitor.py
-git commit -m "feat(python): add monitor.py with sparkline plot (issue #TBD)"
+git commit -m "feat(python): add monitor.py with sparkline plot (monitor mode)"
 ```
 
 ---
@@ -945,7 +945,7 @@ aa:bb:cc:dd:ee:02    ░    ░    ░    ░    ▓    ▓    ░    ░    ░
 probe:aa:bb:cc:01    ░    ▓    ▓    ░    ░    ░    █    █    ▓
 ```
 
-**Status:** Not implemented. Tracked in issue #TBD-presence.
+**Status:** Not implemented. Tracked in issue #30.
 
 ## Channel utilization (`--kind channel`)
 
@@ -970,7 +970,7 @@ APs visible
         channel
 ```
 
-**Status:** Not implemented. Tracked in issue #TBD-channel.
+**Status:** Not implemented. Tracked in issue #33.
 
 ## Drift / anomaly detection (`--kind drift`)
 
@@ -996,7 +996,7 @@ RSSI
       00:00     12:00     24:00
 ```
 
-**Status:** Not implemented. Tracked in issue #TBD-drift.
+**Status:** Not implemented. Tracked in issue #34.
 
 ## Out of scope entirely
 
@@ -1008,7 +1008,7 @@ iteration could deploy ≥3 ESP32 boards with clock sync, each running
 streams into trilateralized device positions. This is a substantial
 new project, not a feature of this tool.
 
-Tracked in issue #TBD-multi-receiver.
+Tracked in issue #32.
 ```
 
 **Step 2:** Commit.
@@ -1103,7 +1103,7 @@ git commit -m "docs(readme): add Monitor mode section"
 * `!monitor` and `!promisc on` cannot run simultaneously: the radio
   cannot be in promiscuous mode while performing an active scan.
   The first to claim the radio wins. To switch, turn the other off
-  first. Tracked in issue #TBD-monitor-promisc-conflict.
+  first. Tracked in issue #31.
 ```
 
 **Step 3:** Commit.
@@ -1147,22 +1147,15 @@ pio run
 ---
 
 ## Issue tracking (separate, not part of the build)
+The five deferred issues are already open on GitHub:
 
-Open these GitHub issues with the `needs-triage` label (per
-`docs/agents/triage-labels.md`):
+- Monitor deferred: presence — issue #30
+- Monitor deferred: channel — issue #33
+- Monitor deferred: drift — issue #34
+- Multi-receiver triangulation (out of scope) — issue #32
+- `!monitor` / `!promisc` radio conflict — issue #31
 
-- `!scan` runtime command — issue #TBD
-- `!monitor` runtime command — issue #TBD
-- `monitorTick` firmware helper — issue #TBD
-- `wifiscan.timeseries` — issue #TBD
-- `monitor.py --kind sparkline` — issue #TBD
-- Monitor deferred: presence — issue #TBD-presence
-- Monitor deferred: channel — issue #TBD-channel
-- Monitor deferred: drift — issue #TBD-drift
-- Multi-receiver triangulation (out of scope) — issue #TBD-multi-receiver
-- `!monitor` / `!promisc` radio conflict — issue #TBD-monitor-promisc-conflict
-
-Each issue body should reference the relevant section of
+Each issue body references the relevant section of
 `docs/plans/2026-06-25-radio-monitor-design.md`.
 
 ---
