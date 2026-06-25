@@ -55,8 +55,18 @@ constexpr uint8_t  SPOT_LABEL_MAX_LEN   = 31;
 constexpr bool     SCAN_ASYNC           = false;
 constexpr bool     SCAN_SHOW_HIDDEN     = true;
 constexpr bool     SCAN_PASSIVE         = false;
-constexpr uint16_t SCAN_MAX_MS_PER_CHAN = 300;
-constexpr uint8_t  SCAN_CHANNEL         = 0;  // 0 = scan every 2.4 GHz channel.
+
+// Runtime-tunable scan parameters (issue #22). Initialized to the former
+// compile-time defaults so behavior is unchanged until the host sends a
+// !dwell or !channel command.
+constexpr uint16_t DWELL_DEFAULT_MS     = 300;
+constexpr uint8_t  CHANNEL_DEFAULT      = 0;  // 0 = scan every 2.4 GHz channel.
+constexpr uint16_t DWELL_MIN_MS         = 50;
+constexpr uint16_t DWELL_MAX_MS         = 2000;
+constexpr uint8_t  CHANNEL_MAX          = 14;  // 2.4 GHz top channel.
+
+uint16_t    g_dwell_ms  = DWELL_DEFAULT_MS;
+uint8_t     g_channel   = CHANNEL_DEFAULT;
 
 char        g_spot_label[SPOT_LABEL_MAX_LEN + 1] = "default";
 uint16_t    g_spot_id                             = 0;
@@ -83,6 +93,69 @@ inline void ledConfirmBlinks() {
     }
 }
 
+// Handle a `!`-prefixed host command (issue #22). Returns true if the line
+// was a command (consumed), false otherwise. Commands:
+//   !dwell <ms>      set per-channel scan dwell (50-2000 ms)
+//   !channel <n>     set scan channel (0 = all, 1..14 = single 2.4 GHz chan)
+// Any other `!`-prefixed line echoes an unknown-command notice.
+bool handleCommand(char* line) {
+    if (line[0] != '!') {
+        return false;
+    }
+
+    // Tokenize on whitespace. strtok is safe here because `line` is a
+    // mutable stack buffer owned by readSerialLabel().
+    char* cmd = strtok(line, " \t");
+    if (!cmd) {
+        Serial.println("# unknown cmd: !");
+        Serial.flush();
+        return true;
+    }
+
+    if (strcmp(cmd, "!dwell") == 0) {
+        char* arg = strtok(nullptr, " \t");
+        if (!arg) {
+            Serial.println("# cmd: out of range");
+            Serial.flush();
+            return true;
+        }
+        const long v = strtol(arg, nullptr, 10);
+        if (v < static_cast<long>(DWELL_MIN_MS) ||
+            v > static_cast<long>(DWELL_MAX_MS)) {
+            Serial.println("# cmd: out of range");
+        } else {
+            g_dwell_ms = static_cast<uint16_t>(v);
+            Serial.printf("# dwell=%u\n", static_cast<unsigned>(g_dwell_ms));
+        }
+        Serial.flush();
+        return true;
+    }
+
+    if (strcmp(cmd, "!channel") == 0) {
+        char* arg = strtok(nullptr, " \t");
+        if (!arg) {
+            Serial.println("# cmd: out of range");
+            Serial.flush();
+            return true;
+        }
+        const long v = strtol(arg, nullptr, 10);
+        if (v < 0 || v > static_cast<long>(CHANNEL_MAX)) {
+            Serial.println("# cmd: out of range");
+        } else {
+            g_channel = static_cast<uint8_t>(v);
+            Serial.printf("# channel=%u\n", static_cast<unsigned>(g_channel));
+        }
+        Serial.flush();
+        return true;
+    }
+
+    // Unknown command: echo the original token so the user sees what was
+    // rejected. Re-print from `cmd` (already NUL-terminated by strtok).
+    Serial.printf("# unknown cmd: %s\n", cmd);
+    Serial.flush();
+    return true;
+}
+
 // Sample a non-empty serial line into g_spot_label. Returns true on update.
 bool readSerialLabel() {
     if (!Serial.available()) {
@@ -107,6 +180,10 @@ bool readSerialLabel() {
         Serial.read();
     }
     if (buf[0] == '\0') {
+        return false;
+    }
+    // `!`-prefixed lines are host commands, not spot labels (issue #22).
+    if (handleCommand(buf)) {
         return false;
     }
     copyLabel(g_spot_label, sizeof(g_spot_label), buf);
@@ -155,8 +232,8 @@ void logCurrentSpot() {
 
     const int n = WiFi.scanNetworks(SCAN_ASYNC, SCAN_SHOW_HIDDEN,
                                    SCAN_PASSIVE,
-                                   static_cast<int>(SCAN_MAX_MS_PER_CHAN),
-                                   static_cast<int>(SCAN_CHANNEL));
+                                   static_cast<int>(g_dwell_ms),
+                                   static_cast<int>(g_channel));
 
     const uint16_t spot_id    = g_spot_id;
     const uint32_t stamp_ms   = millis();
