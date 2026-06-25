@@ -21,6 +21,7 @@ The CSV-writing path in ``capture.py`` is unchanged whether or not
 from __future__ import annotations
 
 import http.server
+import io
 import json
 import queue
 import threading
@@ -424,7 +425,7 @@ es.addEventListener('devices', (e) => {
 class _SSEClient:
     """Per-client SSE state: a write queue + the wfile to write to."""
 
-    def __init__(self, wfile) -> None:
+    def __init__(self, wfile: io.BufferedIOBase) -> None:
         self.wfile = wfile
         self.queue: queue.Queue[Optional[bytes]] = queue.Queue(maxsize=256)
 
@@ -450,7 +451,7 @@ class LiveServer:
         live_server = self  # captured by the handler closure
 
         class Handler(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):  # noqa: N802 (stdlib naming)
+            def do_GET(self) -> None:  # noqa: N802 (stdlib naming)
                 if self.path == "/":
                     self._serve_html()
                 elif self.path == "/events":
@@ -493,7 +494,7 @@ class LiveServer:
                         if client in live_server._clients:
                             live_server._clients.remove(client)
 
-            def log_message(self, *args) -> None:
+            def log_message(self, *args: object) -> None:
                 pass  # suppress stderr request logging
 
         self._httpd = http.server.ThreadingHTTPServer((host, port), Handler)
