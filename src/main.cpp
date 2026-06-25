@@ -84,12 +84,28 @@ bool readSerialLabel() {
     if (!Serial.available()) {
         return false;
     }
-    String line = Serial.readStringUntil('\n');
-    line.trim();  // strips \r and whitespace
-    if (line.length() == 0) {
+    // Bounded read into a stack buffer so a multi-megabyte paste cannot
+    // allocate a proportionally large Arduino String and OOM-crash the board.
+    // +1 for NUL terminator, +1 as a sentinel headroom past the label cap.
+    char buf[SPOT_LABEL_MAX_LEN + 2];
+    const size_t n = Serial.readBytesUntil('\n', buf, sizeof(buf) - 1);
+    buf[n] = '\0';
+    // Trim a trailing '\r' so CRLF serial-monitor input still works.
+    if (n > 0 && buf[n - 1] == '\r') {
+        buf[n - 1] = '\0';
+    }
+    // Discard any overflow bytes until the next '\n' (or end of stream)
+    // so a giant pasted line is consumed without being stored.
+    while (Serial.available() && Serial.peek() != '\n') {
+        Serial.read();
+    }
+    if (Serial.available() && Serial.peek() == '\n') {
+        Serial.read();
+    }
+    if (buf[0] == '\0') {
         return false;
     }
-    copyLabel(g_spot_label, sizeof(g_spot_label), line.c_str());
+    copyLabel(g_spot_label, sizeof(g_spot_label), buf);
     ledAckBlink();
     char* label_esc = csvEscape(g_spot_label);
     Serial.printf("# label=%s\n", label_esc);
