@@ -30,6 +30,7 @@
 #include <WiFi.h>
 #include <math.h>
 #include <esp_task_wdt.h>
+#define FIRMWARE_VERSION "0.2.0"
 
 namespace {
 
@@ -236,6 +237,8 @@ void setup() {
     Serial.println();
     Serial.println(F("# Wi-Fi Scanner with Signal Map"));
     Serial.println(F("# Freenove ESP32 WROVER | CH340 on COM10 @ 115200"));
+    Serial.printf("# fw_version=%s\n", FIRMWARE_VERSION);
+    Serial.printf("# mac=EC:C9:FF:CD:60:44\n");
     Serial.println(F("# spot_id,spot_label,timestamp_ms,ssid,bssid,rssi,channel,auth_mode,est_distance_m"));
     Serial.flush();
 
