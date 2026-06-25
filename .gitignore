@@ -5,3 +5,7 @@
 __pycache__/
 *.pyc
 *.egg-info/
+
+# Runtime capture output: CSVs written by capture.py and PNGs rendered
+# by heatmap.py. Reproducible from a fresh scan, never tracked.
+logs/
