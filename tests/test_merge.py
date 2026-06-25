@@ -131,26 +131,11 @@ class TestMergeFiles:
             merge_files([])
 
 
-# ``wifiscan.merge.dedup_median`` aggregates a fixed set of columns and then
-# indexes by ``EXPECTED_COLUMNS``.  Schema v2 (issue #1) added ``frame_type``
-# and ``src_mac`` to ``EXPECTED_COLUMNS``, but ``wifiscan/merge.py`` is owned
-# by a later issue and must not be touched here, so ``dedup_median`` does not
-# yet emit the new columns and the three dedup tests below are expected to
-# fail until that follow-up lands.  Marking them ``xfail`` keeps the suite
-# green without weakening the assertions or editing the forbidden module.
-_DEDUP_SCHEMA_V2_INCOMPAT = pytest.mark.xfail(
-    reason="wifiscan/merge.py dedup_median not yet updated for schema v2 "
-           "(frame_type/src_mac); tracked for a follow-up issue.",
-    strict=True,
-)
-
-
 # ---------------------------------------------------------------------------
 # dedup_median
 # ---------------------------------------------------------------------------
 
 class TestDedupMedian:
-    @_DEDUP_SCHEMA_V2_INCOMPAT
     def test_collapses_identical_triplets(self):
         df = pd.DataFrame(
             [
@@ -169,7 +154,6 @@ class TestDedupMedian:
         assert aa["est_distance_m"] == 2.0
         assert list(out.columns) == list(EXPECTED_COLUMNS)
 
-    @_DEDUP_SCHEMA_V2_INCOMPAT
     def test_dedup_via_merge_files(self, tmp_path):
         a = write_csv(
             tmp_path / "a.csv",
@@ -236,7 +220,6 @@ class TestMain:
         with pytest.raises(SystemExit):
             main([str(a)])
 
-    @_DEDUP_SCHEMA_V2_INCOMPAT
     def test_dedup_median_cli(self, tmp_path, capsys):
         a = write_csv(tmp_path / "a.csv", [make_row(spot_id=1, spot_label="k", bssid="aa", channel=6, rssi=-50, est_distance_m=1.0)])
         b = write_csv(tmp_path / "b.csv", [make_row(spot_id=1, spot_label="k", bssid="aa", channel=6, rssi=-70, est_distance_m=3.0)])

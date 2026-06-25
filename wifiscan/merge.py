@@ -85,6 +85,8 @@ def dedup_median(df: pd.DataFrame) -> pd.DataFrame:
         timestamp_ms=("timestamp_ms", "first"),
         ssid=("ssid", "first"),
         auth_mode=("auth_mode", "first"),
+        frame_type=("frame_type", "first"),
+        src_mac=("src_mac", "first"),
     )
     return agg[list(EXPECTED_COLUMNS)]
 
