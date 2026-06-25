@@ -37,6 +37,7 @@ import capture  # noqa: E402  (after sys.path manipulation)
 from wifiscan.schema import (  # noqa: E402
     EXPECTED_COLUMNS,
     HEADER_LINE,
+    _safe_field,
     check_header,
     parse_data_row,
     parse_footer,
@@ -326,3 +327,63 @@ def test_safe_fieldname_special_chars_replaced() -> None:
 def test_safe_fieldname_empty_returns_hidden() -> None:
     """Empty SSID yields the sentinel 'hidden' so the caller always gets a name."""
     assert safe_fieldname("") == "hidden"
+
+
+# ---------------------------------------------------------------------------
+# _safe_field — CSV injection mitigation (issue #18)
+# ---------------------------------------------------------------------------
+
+def test_safe_field_equals_prefix() -> None:
+    """A cell beginning with '=' gets a leading single-quote prefix."""
+    assert _safe_field("=HYPERLINK(\"http://evil\",\"x\")") == "'=HYPERLINK(\"http://evil\",\"x\")"
+
+
+def test_safe_field_plus_minus_at_prefix() -> None:
+    """Cells beginning with '+', '-', or '@' get a leading single-quote prefix."""
+    assert _safe_field("+cmd") == "'+cmd"
+    assert _safe_field("-1+1|cmd") == "'-1+1|cmd"
+    assert _safe_field("@SUM(A1:A2)") == "'@SUM(A1:A2)"
+
+
+def test_safe_field_normal_unchanged() -> None:
+    """Normal cells (no formula prefix) pass through untouched."""
+    assert _safe_field("MyNet") == "MyNet"
+    assert _safe_field("WPA2_PSK") == "WPA2_PSK"
+    assert _safe_field("aa:bb:cc:dd:ee:ff") == "aa:bb:cc:dd:ee:ff"
+    # A minus sign in the middle (not the first char) is fine.
+    assert _safe_field("Net-5G") == "Net-5G"
+    # Empty string is unchanged (no prefix).
+    assert _safe_field("") == ""
+
+
+def test_parse_data_row_applies_safe_field_to_injected_ssid() -> None:
+    """parse_data_row() must run free-text fields through _safe_field()."""
+    # SSID beginning with '=' — the canonical CSV-injection payload.  The
+    # SSID contains commas and quotes, so it is CSV-quoted with doubled
+    # internal quotes; csv.reader unescapes it back to the raw SSID before
+    # _safe_field prefixes it.
+    line = (
+        '1,living-room,12345,"=HYPERLINK(""http://evil"",""x"")",'
+        'aa:bb:cc:dd:ee:ff,-55,6,WPA2_PSK,2.34'
+    )
+    row = parse_data_row(line)
+    assert row is not None
+    assert row["ssid"] == '\'=HYPERLINK("http://evil","x")'
+    # A non-injected free-text field is unchanged.
+    assert row["auth_mode"] == "WPA2_PSK"
+    # A numeric field is left untouched (no leading-quote corruption).
+    assert row["rssi"] == "-55"
+
+
+def test_parse_data_row_applies_safe_field_to_at_prefixed_label() -> None:
+    """A spot_label beginning with '@' is also mitigated; numeric rssi is not."""
+    line = (
+        '1,@evil-label,12345,MyNet,aa:bb:cc:dd:ee:ff,-55,6,WPA2_PSK,2.34'
+    )
+    row = parse_data_row(line)
+    assert row is not None
+    assert row["spot_label"] == "'@evil-label"
+    assert row["ssid"] == "MyNet"
+    # Negative RSSI must NOT be prefixed — it is firmware-controlled and
+    # prefixing would corrupt downstream numeric parsing.
+    assert row["rssi"] == "-55"

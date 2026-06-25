@@ -31,6 +31,7 @@ __all__ = [
     "parse_footer",
     "safe_fieldname",
     "check_header",
+    "_safe_field",
     "main",
 ]
 
@@ -69,6 +70,39 @@ _FOOTER_RE = re.compile(
 )
 
 
+#: Characters that begin a CSV-injection formula in spreadsheet apps.
+#: If a cell's first character is one of these, the cell is prefixed with
+#: a single quote (Excel's safe-by-prefix convention) so a malicious SSID
+#: like ``=HYPERLINK(...)`` cannot execute a formula on import.
+_CSV_INJECTION_PREFIXES = frozenset({"=", "+", "-", "@"})
+
+
+def _safe_field(value: str) -> str:
+    """Mitigate CSV injection in spreadsheet apps.
+
+    Returns ``value`` unchanged if its first character is not one of
+    ``=``, ``+``, ``-``, ``@`` (the characters that begin a formula in
+    Excel/LibreOffice).  Otherwise returns ``"'" + value`` — the leading
+    single quote is Excel's documented safe-by-prefix convention and is
+    not displayed to the user.
+    """
+    if value and value[0] in _CSV_INJECTION_PREFIXES:
+        return "'" + value
+    return value
+
+
+#: Columns whose values are free text that an end user (or a malicious
+#: AP's SSID) can influence.  These are the CSV-injection attack surface
+#: and are run through :func:`_safe_field` in :func:`parse_data_row`.
+#: Numeric columns (spot_id, timestamp_ms, rssi, channel, est_distance_m)
+#: are firmware-generated, cannot legitimately begin with a formula
+#: character, and are left untouched — prefixing e.g. ``rssi="-55"``
+#: would corrupt downstream numeric parsing (``pd.to_numeric``).
+_SAFE_COLUMNS: frozenset[str] = frozenset(
+    {"spot_label", "ssid", "bssid", "auth_mode"}
+)
+
+
 def parse_data_row(line: str) -> Optional[dict]:
     """Parse a single CSV data row from the firmware into a dict.
 
@@ -76,11 +110,18 @@ def parse_data_row(line: str) -> Optional[dict]:
     ``len(EXPECTED_COLUMNS)`` fields — the firmware is the source of
     truth for column count, so the only valid row length matches it.
     Values are kept as strings; numeric coercion is the caller's job.
+    Free-text fields (see :data:`_SAFE_COLUMNS`) are passed through
+    :func:`_safe_field` to mitigate CSV injection in spreadsheet apps
+    (a malicious SSID beginning with ``=``, ``+``, ``-``, or ``@`` is
+    prefixed with a single quote).  Numeric columns are left untouched.
     """
     parts = next(csv.reader([line]))
     if len(parts) != len(EXPECTED_COLUMNS):
         return None
-    return dict(zip(EXPECTED_COLUMNS, parts))
+    return {
+        col: (_safe_field(val) if col in _SAFE_COLUMNS else val)
+        for col, val in zip(EXPECTED_COLUMNS, parts)
+    }
 
 
 def parse_footer(line: str) -> Optional[dict]:
