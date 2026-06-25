@@ -70,3 +70,6 @@ Footer comment that marks a spot boundary:
 * Don't change the CSV header without updating `capture.py`'s `HEADER_RE`.
 * RSSI→distance is capped at 10 m and is a rough path-loss estimate — not ground truth.
 * The ESP32 can only scan one channel at a time; full-band scans take ~4 s at 300 ms/channel.
+* `spot_label` must be CSV-escaped in all four serial output sites — the label ack (`main.cpp:167`), the data row (`main.cpp:216`), and the two footer comments (`main.cpp:242`, `main.cpp:260`). Only the SSID is escaped today; a label containing a comma or quote will corrupt the CSV.
+* `Serial.readStringUntil('\n')` in `readSerialLabel()` (`main.cpp:160`) has no length bound — a large paste allocates an unbounded `String`. If this becomes a problem, replace with a fixed-buffer read that silently drops excess bytes.
+* The CSV schema is defined in three places: the firmware header print (`main.cpp:281`), the Python `HEADER_RE` regex (`capture.py:47`), and the `CSV_COLUMNS` list (`capture.py:61`). All three must stay in sync; changing one without the others breaks `capture.py`'s header validation.
