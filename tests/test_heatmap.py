@@ -332,3 +332,173 @@ class TestPlotEndToEnd:
         assert "WARNING" in captured.out
         assert "bad" in captured.out
         assert "rssi" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# CLI: --ssid filter and --combined grid (issue #20)
+# ---------------------------------------------------------------------------
+def _write_csv(path: Path, rows: list[dict]) -> None:
+    """Write a minimal CSV with the EXPECTED_COLUMNS header for main()."""
+    import csv as _csv
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        writer = _csv.DictWriter(fh, fieldnames=list(EXPECTED_COLUMNS))
+        writer.writeheader()
+        for r in rows:
+            writer.writerow(r)
+
+
+class TestCliSsidFilter:
+    def test_only_requested_ssids_get_plotted(self, tmp_path, capsys,
+                                              monkeypatch):
+        csv_path = tmp_path / "sample.csv"
+        _write_csv(csv_path, [
+            make_row(ssid="HomeNet", spot_label="s1", rssi=-50,
+                     est_distance_m=1.0),
+            make_row(ssid="Neighbor", spot_label="s1", rssi=-60,
+                     est_distance_m=2.0),
+            make_row(ssid="Other", spot_label="s1", rssi=-70,
+                     est_distance_m=3.0),
+        ])
+        monkeypatch.setattr(sys, "argv",
+                            ["heatmap.py", str(csv_path),
+                             "--ssid", "HomeNet", "--ssid", "Neighbor"])
+        heatmap.main()
+        captured = capsys.readouterr()
+        # Exactly two PNGs written, one per requested SSID.
+        pngs = sorted(p.name for p in tmp_path.glob("*.png"))
+        assert len(pngs) == 2
+        assert any("HomeNet" in n for n in pngs)
+        assert any("Neighbor" in n for n in pngs)
+        # The unrequested SSID is not plotted.
+        assert not any("Other" in n for n in pngs)
+        # A message is printed for each written file.
+        assert captured.out.count("[heatmap] wrote") == 2
+
+    def test_missing_ssid_warned_and_skipped(self, tmp_path, capsys,
+                                             monkeypatch):
+        csv_path = tmp_path / "sample.csv"
+        _write_csv(csv_path, [
+            make_row(ssid="HomeNet", spot_label="s1", rssi=-50,
+                     est_distance_m=1.0),
+        ])
+        monkeypatch.setattr(sys, "argv",
+                            ["heatmap.py", str(csv_path),
+                             "--ssid", "HomeNet", "--ssid", "Ghost"])
+        heatmap.main()
+        captured = capsys.readouterr()
+        # Warning for the missing SSID.
+        assert "Ghost" in captured.out
+        assert "WARNING" in captured.out
+        # Only the existing SSID is plotted (one PNG).
+        pngs = list(tmp_path.glob("*.png"))
+        assert len(pngs) == 1
+        assert "HomeNet" in pngs[0].name
+
+
+class TestCliCombined:
+    def test_combined_writes_single_file(self, tmp_path, capsys, monkeypatch):
+        csv_path = tmp_path / "sample.csv"
+        _write_csv(csv_path, [
+            make_row(ssid="A", spot_label="s1", rssi=-50, est_distance_m=1.0),
+            make_row(ssid="B", spot_label="s1", rssi=-60, est_distance_m=2.0),
+            make_row(ssid="C", spot_label="s1", rssi=-70, est_distance_m=3.0),
+        ])
+        monkeypatch.setattr(sys, "argv",
+                            ["heatmap.py", str(csv_path), "--combined"])
+        heatmap.main()
+        captured = capsys.readouterr()
+        pngs = list(tmp_path.glob("*.png"))
+        # Exactly one combined PNG.
+        assert len(pngs) == 1
+        assert "combined" in pngs[0].name
+        # One write message mentioning 3 subplots.
+        assert captured.out.count("[heatmap] wrote") == 1
+        assert "3 subplot" in captured.out
+
+    def test_combined_above_max_falls_back_to_per_file(self, tmp_path, capsys,
+                                                      monkeypatch):
+        csv_path = tmp_path / "sample.csv"
+        rows = [
+            make_row(ssid=f"Net{i}", spot_label="s1", rssi=-50 - i,
+                     est_distance_m=1.0)
+            for i in range(3)
+        ]
+        _write_csv(csv_path, rows)
+        # --combined-max set below the SSID count forces per-file fallback.
+        monkeypatch.setattr(sys, "argv",
+                            ["heatmap.py", str(csv_path),
+                             "--combined", "--combined-max", "2"])
+        heatmap.main()
+        captured = capsys.readouterr()
+        pngs = list(tmp_path.glob("*.png"))
+        # Three per-SSID files, no combined file.
+        assert len(pngs) == 3
+        assert not any("combined" in p.name for p in pngs)
+        assert captured.out.count("[heatmap] wrote") == 3
+
+    def test_combined_with_coords_uses_scatter(self, tmp_path, capsys,
+                                               monkeypatch):
+        csv_path = tmp_path / "sample.csv"
+        coords_path = tmp_path / "coords.csv"
+        _write_csv(csv_path, [
+            make_row(ssid="A", spot_label="s1", rssi=-50, est_distance_m=1.0),
+            make_row(ssid="A", spot_label="s2", rssi=-60, est_distance_m=2.0),
+            make_row(ssid="B", spot_label="s1", rssi=-55, est_distance_m=1.5),
+        ])
+        coords_path.write_text(
+            "spot_label,x,y\ns1,0.0,0.0\ns2,1.0,1.0\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(sys, "argv",
+                            ["heatmap.py", str(csv_path),
+                             "--coords", str(coords_path), "--combined"])
+        heatmap.main()
+        pngs = list(tmp_path.glob("*.png"))
+        assert len(pngs) == 1
+        assert "combined" in pngs[0].name
+
+
+class TestSsidAndCombinedComposition:
+    def test_combined_grid_contains_only_filtered_ssids(self, tmp_path, capsys,
+                                                       monkeypatch):
+        csv_path = tmp_path / "sample.csv"
+        _write_csv(csv_path, [
+            make_row(ssid="HomeNet", spot_label="s1", rssi=-50,
+                     est_distance_m=1.0),
+            make_row(ssid="Neighbor", spot_label="s1", rssi=-60,
+                     est_distance_m=2.0),
+            make_row(ssid="Exclude", spot_label="s1", rssi=-70,
+                     est_distance_m=3.0),
+        ])
+        monkeypatch.setattr(sys, "argv",
+                            ["heatmap.py", str(csv_path),
+                             "--ssid", "HomeNet", "--ssid", "Neighbor",
+                             "--combined"])
+        heatmap.main()
+        captured = capsys.readouterr()
+        pngs = list(tmp_path.glob("*.png"))
+        # Single combined file containing only the two filtered SSIDs.
+        assert len(pngs) == 1
+        assert "combined" in pngs[0].name
+        assert "2 subplot" in captured.out
+        # The excluded SSID never appears in any output filename.
+        assert "Exclude" not in captured.out
+
+
+class TestDefaultBehaviorUnchanged:
+    def test_no_flags_writes_one_png_per_ssid(self, tmp_path, capsys,
+                                             monkeypatch):
+        csv_path = tmp_path / "sample.csv"
+        _write_csv(csv_path, [
+            make_row(ssid="A", spot_label="s1", rssi=-50, est_distance_m=1.0),
+            make_row(ssid="B", spot_label="s1", rssi=-60, est_distance_m=2.0),
+            make_row(ssid="C", spot_label="s1", rssi=-70, est_distance_m=3.0),
+        ])
+        monkeypatch.setattr(sys, "argv", ["heatmap.py", str(csv_path)])
+        heatmap.main()
+        captured = capsys.readouterr()
+        pngs = sorted(p.name for p in tmp_path.glob("*.png"))
+        # One PNG per SSID, no combined file.
+        assert len(pngs) == 3
+        assert not any("combined" in n for n in pngs)
+        assert captured.out.count("[heatmap] wrote") == 3

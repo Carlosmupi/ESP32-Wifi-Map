@@ -20,6 +20,7 @@ Dependencies:
 """
 
 import argparse
+import math
 import sys
 from pathlib import Path
 # Canonical CSV schema (column list, filename sanitizer) lives in the
@@ -168,12 +169,8 @@ def merge_coords(df: pd.DataFrame, coords: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def plot_scatter_heatmap(df: pd.DataFrame, ssid: str, out: Path) -> None:
-    sub, warnings = _coerce_numeric(df, ssid)
-    for w in warnings:
-        print(w)
-
-    fig, ax = plt.subplots(figsize=(8, 6))
+def _draw_scatter(ax, sub: pd.DataFrame) -> None:
+    """Draw a scatter heatmap onto an existing axes for one SSID's rows."""
     sc = ax.scatter(
         sub["x"], sub["y"],
         c=sub["rssi"], cmap="viridis",
@@ -187,12 +184,38 @@ def plot_scatter_heatmap(df: pd.DataFrame, ssid: str, out: Path) -> None:
             textcoords="offset points", xytext=(8, 8),
             fontsize=9, color="black",
         )
-    ax.set_title(f"{ssid} — RSSI by spot")
+    ax.set_title(f"{sub['ssid'].iloc[0]} — RSSI by spot")
     ax.set_xlabel("x")
     ax.set_ylabel("y")
     ax.grid(True, alpha=0.3)
     cb = plt.colorbar(sc, ax=ax)
     cb.set_label("RSSI (dBm)")
+
+
+def _draw_bar(ax, sub: pd.DataFrame) -> None:
+    """Draw a horizontal bar chart onto an existing axes for one SSID's rows."""
+    sub = sub.sort_values("rssi", ascending=False)
+    bars = ax.barh(sub["spot_label"], sub["rssi"],
+                   color="#4a90e2", edgecolor="black")
+    ax.set_xlim(RSSI_VMIN, RSSI_VMAX)
+    ax.set_xlabel("RSSI (dBm)")
+    ax.set_title(f"{sub['ssid'].iloc[0]} — signal strength by spot")
+    ax.invert_yaxis()
+    ax.grid(True, axis="x", alpha=0.3)
+    for bar, dist in zip(bars, sub["est_distance_m"]):
+        ax.text(
+            bar.get_width() + 1, bar.get_y() + bar.get_height() / 2,
+            f"  {dist:.1f} m", va="center", fontsize=9, color="dimgray",
+        )
+
+
+def plot_scatter_heatmap(df: pd.DataFrame, ssid: str, out: Path) -> None:
+    sub, warnings = _coerce_numeric(df, ssid)
+    for w in warnings:
+        print(w)
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    _draw_scatter(ax, sub)
     fig.tight_layout()
     fig.savefig(out, dpi=120)
     plt.close(fig)
@@ -203,23 +226,49 @@ def plot_bar_chart(df: pd.DataFrame, ssid: str, out: Path) -> None:
     for w in warnings:
         print(w)
 
-    # Sort by strongest signal at the top.
-    sub = sub.sort_values("rssi", ascending=False)
-
     fig, ax = plt.subplots(figsize=(8, max(3, 0.4 * len(sub))))
-    bars = ax.barh(sub["spot_label"], sub["rssi"],
-                   color="#4a90e2", edgecolor="black")
-    ax.set_xlim(RSSI_VMIN, RSSI_VMAX)
-    ax.set_xlabel("RSSI (dBm)")
-    ax.set_title(f"{ssid} — signal strength by spot")
-    ax.invert_yaxis()
-    ax.grid(True, axis="x", alpha=0.3)
+    _draw_bar(ax, sub)
+    fig.tight_layout()
+    fig.savefig(out, dpi=120)
+    plt.close(fig)
 
-    for bar, dist in zip(bars, sub["est_distance_m"]):
-        ax.text(
-            bar.get_width() + 1, bar.get_y() + bar.get_height() / 2,
-            f"  {dist:.1f} m", va="center", fontsize=9, color="dimgray",
-        )
+
+def plot_combined(df: pd.DataFrame, ssids: list[str], out: Path,
+                  has_coords: bool) -> None:
+    """Render a single figure with a grid of subplots, one axes per SSID.
+
+    Uses ``math.ceil(sqrt(len(ssids)))`` rows and columns. Each subplot
+    reuses the same per-SSID drawing logic (scatter or bar) as the
+    standalone plots. ``ssids`` is expected to be already filtered to the
+    SSIDs present in ``df`` and within the combined-max threshold.
+    """
+    n = len(ssids)
+    if n == 0:
+        return
+    ncols = math.ceil(math.sqrt(n))
+    nrows = math.ceil(n / ncols)
+
+    fig, axes = plt.subplots(
+        nrows, ncols,
+        figsize=(5 * ncols, 4 * nrows),
+        squeeze=False,
+    )
+    axes_flat = axes.flatten()
+
+    for idx, ssid in enumerate(ssids):
+        ax = axes_flat[idx]
+        sub, warnings = _coerce_numeric(df, ssid)
+        for w in warnings:
+            print(w)
+        if has_coords:
+            _draw_scatter(ax, sub)
+        else:
+            _draw_bar(ax, sub)
+
+    # Hide any unused axes.
+    for idx in range(n, len(axes_flat)):
+        axes_flat[idx].set_visible(False)
+
     fig.tight_layout()
     fig.savefig(out, dpi=120)
     plt.close(fig)
@@ -235,6 +284,20 @@ def main() -> None:
     parser.add_argument("--coords", type=Path, default=None,
                         help="Optional coords.csv with columns "
                              "spot_label,x,y")
+    parser.add_argument("--ssid", action="append", default=None,
+                        metavar="NAME",
+                        help="Render only the named SSID (repeatable). "
+                             "A requested SSID absent from the data is "
+                             "skipped with a printed warning.")
+    parser.add_argument("--combined", action="store_true",
+                        help="Render a single figure with a grid of "
+                             "subplots (one axes per SSID) instead of one "
+                             "PNG per SSID. Falls back to per-file output "
+                             "when the SSID count exceeds --combined-max.")
+    parser.add_argument("--combined-max", type=int, default=9,
+                        metavar="N",
+                        help="Maximum SSID count for which --combined "
+                             "produces a single grid figure (default: 9).")
     args = parser.parse_args()
 
     if not args.csv_path.is_file():
@@ -253,17 +316,40 @@ def main() -> None:
     out_dir = args.csv_path.parent
     basename = args.csv_path.stem
 
+    # --ssid filter: keep only requested SSIDs that exist in the data.
+    if args.ssid is not None:
+        available = set(df["ssid"].unique())
+        requested = list(args.ssid)
+        missing = [s for s in requested if s not in available]
+        for s in missing:
+            print(f"[heatmap] WARNING: requested SSID '{s}' not found in "
+                  "data; skipping")
+        df = df[df["ssid"].isin(requested)]
+
     print(f"[heatmap] {len(df)} rows across "
           f"{df['spot_label'].nunique()} spot(s) and "
           f"{df['ssid'].nunique()} AP(s)")
+
+    if df.empty:
+        print("[heatmap] no rows to plot after filtering; nothing written")
+        return
 
     # Per-SSID summary.
     summary = summarise(df)
     print("\n[heatmap] per-AP summary:")
     print(summary.to_string())
 
-    # One plot per unique SSID.
-    for ssid in sorted(df["ssid"].unique()):
+    ssids = sorted(df["ssid"].unique())
+
+    if args.combined and len(ssids) <= args.combined_max:
+        safe = safe_fieldname("_".join(ssids)) if ssids else "combined"
+        out = out_dir / f"{basename}_combined_{safe}.png"
+        plot_combined(df, ssids, out, has_coords)
+        print(f"[heatmap] wrote {out.name} ({len(ssids)} subplot(s))")
+        return
+
+    # Default: one plot per unique SSID.
+    for ssid in ssids:
         safe = safe_fieldname(ssid)
         if has_coords:
             out = out_dir / f"{basename}_{safe}_heatmap.png"
