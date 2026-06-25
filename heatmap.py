@@ -45,12 +45,48 @@ except ImportError as exc:
 # ---------------------------------------------------------------------------
 RSSI_VMIN = -90
 RSSI_VMAX = -30
+DISTANCE_CAP_M = 50.0
+
+
+def _coerce_numeric(df: pd.DataFrame, ssid: str) -> tuple[pd.DataFrame, list[str]]:
+    """Coerce rssi and est_distance_m on the per-SSID subset.
+
+    Non-numeric rssi is replaced with the -100 dBm sentinel (no signal);
+    non-numeric est_distance_m is replaced with DISTANCE_CAP_M. The row is
+    preserved so the spot is still annotated, and a one-line warning is
+    emitted per coerced row so silent data loss is impossible.
+    """
+    sub = df[df["ssid"] == ssid].copy()
+    warnings: list[str] = []
+
+    rssi_num = pd.to_numeric(sub["rssi"], errors="coerce")
+    rssi_bad = rssi_num.isna()
+    if rssi_bad.any():
+        for label in sub.loc[rssi_bad, "spot_label"].tolist():
+            warnings.append(
+                f"[heatmap] WARNING: rssi for spot '{label}' "
+                f"(ssid='{ssid}') is not numeric; using sentinel -100 dBm"
+            )
+    sub["rssi"] = rssi_num.fillna(-100).astype(int)
+
+    dist_num = pd.to_numeric(sub["est_distance_m"], errors="coerce")
+    dist_bad = dist_num.isna()
+    if dist_bad.any():
+        for label in sub.loc[dist_bad, "spot_label"].tolist():
+            warnings.append(
+                f"[heatmap] WARNING: est_distance_m for spot '{label}' "
+                f"(ssid='{ssid}') is not numeric; using sentinel "
+                f"{DISTANCE_CAP_M} m"
+            )
+    sub["est_distance_m"] = dist_num.fillna(DISTANCE_CAP_M).astype(float)
+
+    return sub, warnings
 
 
 def plot_scatter_heatmap(df: pd.DataFrame, ssid: str, out: Path) -> None:
-    sub = df[df["ssid"] == ssid].copy()
-    sub["rssi"] = sub["rssi"].astype(int)
-    sub["est_distance_m"] = sub["est_distance_m"].astype(float)
+    sub, warnings = _coerce_numeric(df, ssid)
+    for w in warnings:
+        print(w)
 
     fig, ax = plt.subplots(figsize=(8, 6))
     sc = ax.scatter(
@@ -78,9 +114,9 @@ def plot_scatter_heatmap(df: pd.DataFrame, ssid: str, out: Path) -> None:
 
 
 def plot_bar_chart(df: pd.DataFrame, ssid: str, out: Path) -> None:
-    sub = df[df["ssid"] == ssid].copy()
-    sub["rssi"] = sub["rssi"].astype(int)
-    sub["est_distance_m"] = sub["est_distance_m"].astype(float)
+    sub, warnings = _coerce_numeric(df, ssid)
+    for w in warnings:
+        print(w)
 
     # Sort by strongest signal at the top.
     sub = sub.sort_values("rssi", ascending=False)
@@ -136,14 +172,35 @@ def main() -> None:
         if not coord_cols.issubset(coords.columns):
             raise SystemExit(
                 f"coords file must contain columns {sorted(coord_cols)}")
+        # Validate x/y are numeric. Non-numeric values are a hard error:
+        # failing here prevents the silent merge that would scatter the row
+        # at (0, 0) or drop it without warning.
+        x_num = pd.to_numeric(coords["x"], errors="coerce")
+        y_num = pd.to_numeric(coords["y"], errors="coerce")
+        bad = (x_num.isna() & coords["x"].notna()) | (
+            y_num.isna() & coords["y"].notna())
+        if bad.any():
+            offenders = []
+            for idx in coords.index[bad]:
+                offenders.append(
+                    f"spot_label={coords.at[idx, 'spot_label']!r} "
+                    f"x={coords.at[idx, 'x']!r} y={coords.at[idx, 'y']!r}"
+                )
+            raise SystemExit(
+                "coords file contains non-numeric x/y values; offending "
+                f"row(s): {'; '.join(offenders)}"
+            )
+        coords["x"] = x_num.astype(float)
+        coords["y"] = y_num.astype(float)
         df = df.merge(coords[["spot_label", "x", "y"]], on="spot_label",
                       how="left")
         if df[["x", "y"]].isna().any().any():
             nan_labels = sorted(
                 df.loc[df["x"].isna() | df["y"].isna(), "spot_label"]
                 .unique())
-            print(f"[heatmap] WARNING: no coords for labels {nan_labels}; "
-                  "they will be skipped from the scatter plot.")
+            for label in nan_labels:
+                print(f"[heatmap] WARNING: no coords for spot '{label}'; "
+                      "dropped from scatter plot")
             df = df.dropna(subset=["x", "y"])
 
     out_dir = args.csv_path.parent
