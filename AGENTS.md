@@ -78,7 +78,7 @@ Footer comment that marks a spot boundary:
 * CSV injection mitigation: `_safe_field()` in `wifiscan/schema.py` prefixes `'` to cells starting with `=`, `+`, `-`, `@` — applied only to free-text columns, not numeric ones (RSSI is always negative) (issue #18).
 * Runtime commands (`!dwell`, `!channel`, `!ignore`, `!scan`, `!monitor`, `!promisc`) are parsed in `handleCommand()` in `src/main.cpp` — the ignore list, monitor mode, and `g_scan_in_flight` flag are in-memory and lost on reboot (issues #22, #23, #1, #31).
 * Promiscuous mode (`!promisc on`) coexists with active scan by temporarily disabling promisc during `WiFi.scanNetworks()` (issue #1, `src/main.cpp` `logCurrentSpot()`).
-* `!monitor` and `!promisc on` cannot run simultaneously: the radio cannot be in promiscuous mode while performing an active scan. The first to claim the radio wins. To switch, turn the other off first. Tracked in issue #31.
+* `!monitor` and `!promisc on` **coexist** via the same suspend/resume mechanism issue #1 documents: `logCurrentSpot()` disables promisc for the ~4 s scan and re-enables it afterwards, so the monitor schedule runs on top of promiscuous sniffing. The two are NOT mutually exclusive; there is no "first wins" logic in the firmware. The only shared-resource caveat: a `!scan` (manual or monitor-driven) momentarily interrupts the probe-request stream.
 
 ## How to make a change
 
