@@ -22,7 +22,7 @@ namespace {
 // RSSI -> rough distance parameters (path-loss formula used by
 // Wifi-Radar-Scanner-for-ESP32). Distance is capped so a very weak RSSI
 // never produces a misleadingly large value.
-constexpr int16_t  RSSI_REFERENCE_DBM   = -45;
+constexpr int16_t  RSSI_REFERENCE_DBM   = 45;
 constexpr float    DISTANCE_CAP_M       = 10.0f;
 constexpr float    DISTANCE_SCALE       = 20.0f;
 

@@ -612,5 +612,6 @@ void loop() {
         boot.wait_release();
     }
 
+    esp_task_wdt_reset();
     delay(10);
 }
