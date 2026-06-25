@@ -53,6 +53,13 @@ extern void test_auth_mode_wapi_psk_returns_WAPI_PSK(void);
 extern void test_auth_mode_wpa3_ent_192_returns_WPA3_ENT_192(void);
 extern void test_auth_mode_unknown_returns_UNKNOWN(void);
 
+// ---- monitorTick (test_monitor_tick.cpp) -------------------------
+extern void test_first_call_after_interval_fires(void);
+extern void test_just_before_interval_does_not_fire(void);
+extern void test_repeat_call_without_time_advance_does_not_fire(void);
+extern void test_unsigned_rollover_fires(void);
+extern void test_zero_interval_fires_every_call(void);
+
 // ---- copyLabel (test_copy_label.cpp) ----------------------------------
 extern void test_copy_label_short_input_is_copied_verbatim(void);
 extern void test_copy_label_exact_cap_input_fills_buffer(void);
@@ -95,6 +102,15 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_auth_mode_wapi_psk_returns_WAPI_PSK);
     RUN_TEST(test_auth_mode_wpa3_ent_192_returns_WPA3_ENT_192);
     RUN_TEST(test_auth_mode_unknown_returns_UNKNOWN);
+
+    // monitorTick: pure interval scheduler for the !monitor background
+    // loop. Tested in isolation; the firmware's loop() wires the
+    // monotonic-clock read into the same call.
+    RUN_TEST(test_first_call_after_interval_fires);
+    RUN_TEST(test_just_before_interval_does_not_fire);
+    RUN_TEST(test_repeat_call_without_time_advance_does_not_fire);
+    RUN_TEST(test_unsigned_rollover_fires);
+    RUN_TEST(test_zero_interval_fires_every_call);
 
     // copyLabel: bounded, NUL-terminating copy with embedded-NUL + NULL
     // safety mirrors the legacy Arduino-String length()-bounded behaviour.
