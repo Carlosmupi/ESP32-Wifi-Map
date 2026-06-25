@@ -1,0 +1,2 @@
+# Tracks the firmware's CSV header line (see src/main.cpp setup()); regenerate with `python tools/sync_firmware_header.py`.
+# spot_id,spot_label,timestamp_ms,ssid,bssid,rssi,channel,auth_mode,est_distance_m
