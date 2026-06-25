@@ -35,7 +35,7 @@ Add a new **monitor mode** alongside the existing spatial survey. Same hardware,
 1. **Two new firmware commands** in `handleCommand()`:
    - `!scan` — trigger a scan immediately from the host (equivalent to BOOT).
    - `!monitor on [interval_ms]` / `!monitor off` — toggle automatic background scanning at a configurable interval. Default 5000 ms, minimum 1000 ms. While monitor mode is on, scans emit rows with `spot_label=monitor`.
-2. **A pure helper** `monitorTick(state, now_ms) -> bool` in `wifi_scan_util`, unit-testable on the host (no Arduino deps).
+2. **A pure helper** `monitorTick(last_scan_ms, now_ms, interval_ms) -> bool` declared `inline` in `src/wifi_scan_util.h` (no Arduino deps). Trivial subtraction-and-compare, kept header-only so the host test build can link it without pulling in the full Arduino framework.
 3. **A new Python tool** `monitor.py` that:
    - Reads the same CSV format as `heatmap.py` (consumes `wifiscan/schema.py`).
    - Emits a single PNG with a grid of sparklines, one per AP.
@@ -64,7 +64,7 @@ Add a new **monitor mode** alongside the existing spatial survey. Same hardware,
 │                                                              │
 │  loop()                                                      │
 │    ├─ BOOT pressed    → logCurrentSpot()                     │
-│    └─ monitorTick() && !busy → logCurrentSpot()              │
+│    └─ monitorTick(last, now, interval) && !busy → logCurrentSpot()  │
 └────────────────────────┬─────────────────────────────────────┘
                          │ USB serial CSV
                          ▼
@@ -95,14 +95,13 @@ Add a new **monitor mode** alongside the existing spatial survey. Same hardware,
 1. **The CSV remains the single seam.** `monitor.py` reads `wifiscan/schema.py`; it does not invent a new format. The schema version stays at 2; no new column.
 2. **`capture.py` is not touched.** Monitor mode writes to the same `logs/signal_map_*.csv` files the user already produces. No parallel pipeline.
 3. **`!scan` and `!monitor` collapse to one underlying function.** Both ultimately call `logCurrentSpot()`. The only difference is who decides when.
-4. **`monitorTick` is a pure function.** It takes `(state, now_ms)` and returns `bool`. This is the only new piece of firmware logic worth testing in isolation, and the only one that can be tested without a board.
+4. **`monitorTick` is a pure function.** It takes `(last_scan_ms, now_ms, interval_ms)`, all `uint32_t` in milliseconds, and returns `bool`. No state mutation, no side effects, no I/O. This is the only new piece of firmware logic worth testing in isolation, and the only one that can be tested without a board. The body is one unsigned subtraction plus a comparison.
 5. **`monitor.py` exposes a `Timeseries` result type.** All four plot adapters consume the same `Timeseries`. Adding a new visualization is one new function, not a refactor.
 6. **The "monitor" label is set by firmware, not by user input.** When monitor mode is enabled, the firmware overwrites `g_spot_label` with `"monitor"`. Documented as: do not type spot labels while monitor is on.
 
 ### Firmware changes (concrete)
 
-- `src/wifi_scan_util.h` — declare `monitorTick(state, now_ms)`. Plain C-style function or struct; no Arduino deps.
-- `src/wifi_scan_util.cpp` — implement `monitorTick`. Trivial: `return now_ms - state->last_scan_ms >= state->interval_ms;`.
+- `src/wifi_scan_util.h` — declare `monitorTick(last_scan_ms, now_ms, interval_ms)` as an `inline` function. No `.cpp` change required; the header stays free of `<Arduino.h>` (it already includes only `<stddef.h>`, `<stdint.h>`, `<math.h>`).
 - `src/main.cpp`:
   - Add globals `g_monitor_on`, `g_monitor_interval_ms`, `g_last_monitor_scan_ms`.
   - Extend `handleCommand()` with the `!scan` and `!monitor` branches. They follow the same shape as `!dwell` / `!channel`: tokenize, validate, set, echo a `# ` confirmation, `Serial.flush()`.
@@ -150,4 +149,4 @@ Add a new **monitor mode** alongside the existing spatial survey. Same hardware,
 ## Related issues
 
 - Existing: #1 (promiscuous mode coexistence), #22 (runtime commands), #27 (live dashboard).
-- New (to be opened in this iteration): #TBD-monitor-presence, #TBD-monitor-channel, #TBD-monitor-drift, #TBD-multi-receiver-triangulation.
+- New (already open on GitHub): #30 (presence), #33 (channel), #34 (drift), #32 (multi-receiver triangulation), #31 (!monitor / !promisc radio conflict).

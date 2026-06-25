@@ -87,58 +87,71 @@ pio test -e native --without-uploading
 ```cpp
 // test_monitor_tick.cpp — Unity tests for the inline `monitorTick` helper
 // in src/wifi_scan_util.h. Host-only; does not require the ESP32 toolchain.
+//
+// Follows the suite's existing convention: test functions have external
+// linkage and are wired into Unity by test_main.cpp (the single TU that
+// defines main()). setUp()/tearDown() are intentionally NOT defined here
+// — unity_config.c provides weak empty versions, per the comment at
+// test_main.cpp:10-13.
 
-#include <Arduino.h>  // for `uint32_t` in the native-compat shim
 #include <unity.h>
-#include "wifi_scan_util.h"
 
-void setUp(void) {}
-void tearDown(void) {}
+#include "wifi_scan_util.h"  // already brings in <stdint.h> for uint32_t
 
-static void test_first_call_after_interval_fires(void) {
+void test_first_call_after_interval_fires(void) {
     // Interval of 1000 ms; last scan at t=0; now at t=1000.
     TEST_ASSERT_TRUE(monitorTick(0u, 1000u, 1000u));
 }
 
-static void test_just_before_interval_does_not_fire(void) {
+void test_just_before_interval_does_not_fire(void) {
     TEST_ASSERT_FALSE(monitorTick(0u, 999u, 1000u));
 }
 
-static void test_repeat_call_without_time_advance_does_not_fire(void) {
+void test_repeat_call_without_time_advance_does_not_fire(void) {
     // First fire consumes nothing — `monitorTick` does not mutate state.
     TEST_ASSERT_TRUE(monitorTick(0u, 1000u, 1000u));
     TEST_ASSERT_FALSE(monitorTick(0u, 1000u, 1000u));
 }
 
-static void test_unsigned_rollover_fires(void) {
+void test_unsigned_rollover_fires(void) {
     // 2^32 - 1 ms after the last scan should still fire.
     const uint32_t last = 1u;
     const uint32_t now  = 0u;  // wrapped
     TEST_ASSERT_TRUE(monitorTick(last, now, 1000u));
 }
 
-static void test_zero_interval_fires_every_call(void) {
+void test_zero_interval_fires_every_call(void) {
     TEST_ASSERT_TRUE(monitorTick(0u, 0u, 0u));
     TEST_ASSERT_TRUE(monitorTick(0u, 1u, 0u));
 }
+```
 
-void setup() {
-    UNITY_BEGIN();
+**Step 2:** Register the five new tests in `test/test_wifi_scan_util/test_main.cpp` (the suite has exactly one `main()`; per-function files declare their `test_xxx()` routines there).
+
+Open `test/test_wifi_scan_util/test_main.cpp` and add **two** things:
+
+1. In the `extern` declaration block, after the `authModeString` externs and before the `copyLabel` externs, add:
+
+```cpp
+// ---- monitorTick (test_monitor_tick.cpp) -------------------------
+extern void test_first_call_after_interval_fires(void);
+extern void test_just_before_interval_does_not_fire(void);
+extern void test_repeat_call_without_time_advance_does_not_fire(void);
+extern void test_unsigned_rollover_fires(void);
+extern void test_zero_interval_fires_every_call(void);
+```
+
+2. In the `RUN_TEST(...)` block inside `main()`, after the authModeString `RUN_TEST`s and before the copyLabel `RUN_TEST`s, add:
+
+```cpp
     RUN_TEST(test_first_call_after_interval_fires);
     RUN_TEST(test_just_before_interval_does_not_fire);
     RUN_TEST(test_repeat_call_without_time_advance_does_not_fire);
     RUN_TEST(test_unsigned_rollover_fires);
     RUN_TEST(test_zero_interval_fires_every_call);
-    UNITY_END();
-}
-
-void loop() {}
 ```
 
-**Step 2:** Run the native test. The build will fail because `test/test_wifi_scan_util/test_main.cpp` registers Unity tests; add a `RUN_TEST` reference there.
-
-Open `test/test_wifi_scan_util/test_main.cpp` and locate the `RUN_TEST` block. Add one line for each new test, mirroring the existing style. (Read the file first; the exact position depends on its current content.)
-
+Do not define `setUp()`, `tearDown()`, `setup()`, or `loop()` in this test file — see test_main.cpp:10-13.
 **Step 3:** Build and run.
 
 ```bash
@@ -302,8 +315,12 @@ git commit -m "feat(firmware): add !monitor runtime command (monitor mode)"
 ```cpp
     if (g_monitor_on && !g_scan_in_flight &&
         monitorTick(g_last_monitor_scan_ms, millis(), g_monitor_interval_ms)) {
-        g_last_monitor_scan_ms = millis();
         logCurrentSpot();
+        // Update AFTER the scan returns. A full-band scan takes ~4 s; with
+        // a 1 s interval, setting this before the call would re-fire the
+        // moment the scan finishes (saturation). The interval is now the
+        // gap between scan ends, not between scan starts.
+        g_last_monitor_scan_ms = millis();
     }
 ```
 
@@ -375,10 +392,11 @@ def _row(bssid: str, rssi: int, ts: int, ssid: str = "Net") -> dict:
 def _write_csv(tmp_path: Path, rows: list[dict]) -> Path:
     df = pd.DataFrame(rows, columns=list(EXPECTED_COLUMNS))
     p = tmp_path / "session.csv"
-    # Match firmware header: "# " prefix on the column line.
-    with p.open("w", encoding="utf-8") as f:
-        f.write("# " + ",".join(EXPECTED_COLUMNS) + "\n")
-        df.to_csv(f, index=False, header=False)
+    # Match the on-disk shape capture.py produces (see capture.py
+    # write_header: csv.DictWriter with fieldnames=EXPECTED_COLUMNS, no
+    # '#' prefix, no index column). load_timeseries reads with the
+    # default pd.read_csv, so the fixture must look like that.
+    df.to_csv(p, index=False)
     return p
 
 
@@ -408,9 +426,9 @@ def test_load_sorts_by_timestamp_per_bssid(tmp_path):
 
 def test_load_empty_csv_returns_empty_dict(tmp_path):
     from wifiscan.timeseries import load_timeseries
-    p = tmp_path / "empty.csv"
-    with p.open("w", encoding="utf-8") as f:
-        f.write("# " + ",".join(EXPECTED_COLUMNS) + "\n")
+    # An empty rows list produces a header-only CSV — same shape as
+    # capture.py's write_header() before any spot is appended.
+    p = _write_csv(tmp_path, [])
     ts = load_timeseries(p)
     assert ts == {}
 
@@ -425,20 +443,20 @@ def test_load_skips_rows_missing_rssi(tmp_path):
         columns=list(EXPECTED_COLUMNS),
     )
     p = tmp_path / "with_nan.csv"
-    with p.open("w", encoding="utf-8") as f:
-        f.write("# " + ",".join(EXPECTED_COLUMNS) + "\n")
-        df.to_csv(f, index=False, header=False)
+    df.to_csv(p, index=False)  # normal header, matches capture.py shape
     ts = load_timeseries(p)
     assert ts["aa:bb:cc:dd:ee:01"] == [(1000, -50)]
 
 
 def test_load_rejects_csv_missing_required_columns(tmp_path):
     from wifiscan.timeseries import load_timeseries
+    # Header is missing the required columns (bssid, timestamp_ms, rssi);
+    # load_timeseries must raise SystemExit with the missing names.
+    # No '#' prefix — the on-disk format is a normal CSV header.
     p = tmp_path / "bad.csv"
-    p.write_text("# spot_id,spot_label\n", encoding="utf-8")
+    p.write_text("spot_id,spot_label\n", encoding="utf-8")
     with pytest.raises(SystemExit):
         load_timeseries(p)
-```
 
 **Step 2:** Run the tests. All must FAIL (`ModuleNotFoundError` on `wifiscan.timeseries`).
 
@@ -492,11 +510,14 @@ _REQUIRED = ("bssid", "timestamp_ms", "rssi")
 def load_timeseries(path: Path) -> Timeseries:
     """Read a Wi-Fi Scanner CSV and group its rows by BSSID.
 
-    The CSV must include a comment header line (the firmware prints it as
-    ``# spot_id,...``); the parser uses :data:`wifiscan.schema.EXPECTED_COLUMNS`
-    for column validation, then drops any row whose RSSI is not a number.
+    The CSV is the on-disk format produced by ``capture.py``: a normal
+    ``csv.DictWriter`` header (no ``#`` prefix) followed by data rows.
+    The parser uses :data:`wifiscan.schema.EXPECTED_COLUMNS` for column
+    validation, then drops any row whose RSSI is not a number. This is
+    the same ``pd.read_csv(path)`` call shape as :mod:`heatmap`; keep
+    the two in sync.
     """
-    df = pd.read_csv(path, comment="#")
+    df = pd.read_csv(path)
     missing = [c for c in _REQUIRED if c not in df.columns]
     if missing:
         raise SystemExit(
@@ -597,9 +618,10 @@ def _csv(tmp_path: Path, rows: list[dict]) -> Path:
     from wifiscan.schema import EXPECTED_COLUMNS
     df = pd.DataFrame(rows, columns=list(EXPECTED_COLUMNS))
     p = tmp_path / "session.csv"
-    with p.open("w", encoding="utf-8") as f:
-        f.write("# " + ",".join(EXPECTED_COLUMNS) + "\n")
-        df.to_csv(f, index=False, header=False)
+    # Match capture.py's on-disk shape: normal header, no '#' prefix,
+    # no index column. See capture.py write_header() and the matching
+    # format used in tests/test_timeseries.py::_write_csv.
+    df.to_csv(p, index=False)
     return p
 
 
@@ -905,7 +927,7 @@ MPLBACKEND=Agg python monitor.py logs/signal_map_20260625_142358.csv --kind chan
 
 ---
 
-## Phase 5: Documentation (3 tasks)
+## Phase 5: Documentation (4 tasks)
 
 ### Task 5.1: Write `docs/monitor-deferred.md`
 
@@ -1079,7 +1101,16 @@ Three more `--kind` values are registered in `monitor.py` but
 raise `NotImplementedError`: `presence`, `channel`, `drift`. See
 `docs/monitor-deferred.md` for the design sketches and the issues
 that track them.
-```
+
+### Session length and `spot_id` rollover
+
+The firmware's `spot_id` is a `uint16` (0 to 65535) and is incremented
+once per monitor-mode scan. At the default 5 s interval, it rolls over
+after about 91 hours of continuous capture; at the 1 s minimum, about
+18 hours. The CSV is unchanged across a rollover (the firmware just
+restarts counting from 0) but any analysis tool that treats `spot_id`
+as a global order will see a discontinuity. For sessions expected to
+run longer, capture into separate files.
 
 **Step 3:** Commit.
 
@@ -1115,7 +1146,39 @@ git commit -m "docs(agents): document !monitor / !promisc radio conflict"
 
 ---
 
-## Phase 6: Final verification (2 tasks)
+### Task 5.4: Add `monitor` to the pytest coverage scope
+
+**Files:**
+- Modify: `.github/workflows/ci.yml`
+
+**Step 1:** Find the line:
+
+```yaml
+      - name: Run pytest with coverage
+        run: pytest --cov=wifiscan --cov=capture --cov=heatmap tests/
+```
+
+Change it to:
+
+```yaml
+      - name: Run pytest with coverage
+        run: pytest --cov=wifiscan --cov=capture --cov=heatmap --cov=monitor tests/
+```
+
+This keeps the new tool on equal footing with the existing root-level
+scripts; without it, coverage for `monitor.py` is silently absent
+from the CI report.
+
+**Step 2:** Commit.
+
+```bash
+git add .github/workflows/ci.yml
+git commit -m "ci: include monitor in pytest coverage scope"
+```
+
+---
+
+## Phase 6: Final verification (4 tasks)
 
 ### Task 6.1: Run all tests
 
@@ -1136,7 +1199,23 @@ python tools/check_schema.py
 **Expected:** Exits 0. The schema is unchanged; this confirms the
 firmware header and the Python schema are still in sync.
 
-### Task 6.3: Verify the firmware builds (no upload)
+### Task 6.3: Run mypy (CI gate)
+
+The CI workflow (`.github/workflows/ci.yml:39`) runs `mypy` over the
+whole repo on every push. The new modules `wifiscan/timeseries.py` and
+`monitor.py` MUST pass type-checking before merge, otherwise CI fails
+silently from a local developer's perspective.
+
+```bash
+cd "C:/Dev/Embedded/projects/wifi-scanner-signal-map"
+python -m mypy
+```
+
+**Expected:** Exits 0 with no errors. If a `Skipping analyzing` line
+appears for either new module, mypy is excluding it; fix the underlying
+type error rather than silencing it.
+
+### Task 6.4: Verify the firmware builds (no upload)
 
 ```bash
 pio run
@@ -1173,3 +1252,4 @@ Each issue body references the relevant section of
 - [ ] `README.md` has the Monitor mode section
 - [ ] `AGENTS.md` documents the `!monitor` / `!promisc` conflict
 - [ ] All commits are on a single feature branch (e.g. `feature/radio-monitor`)
+- [ ] `python -m mypy` is green (matches CI gate)
