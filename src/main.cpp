@@ -676,6 +676,19 @@ void loop() {
 
     readSerialLabel();
 
+    // Monitor-mode background scan. Evaluated on every loop iteration
+    // independent of the button check, so the !monitor schedule runs
+    // regardless of BOOT activity. `!g_scan_in_flight` guards against
+    // re-entry if a manual `!scan` is mid-flight. The timestamp is
+    // updated AFTER the scan returns, so the interval is the gap
+    // between scan *ends* (a full-band scan takes ~4 s; setting it
+    // before would re-fire the moment the scan finishes).
+    if (g_monitor_on && !g_scan_in_flight &&
+        monitorTick(g_last_monitor_scan_ms, millis(), g_monitor_interval_ms)) {
+        logCurrentSpot();
+        g_last_monitor_scan_ms = millis();
+    }
+
     if (boot.pressed()) {
         logCurrentSpot();
         boot.wait_release();
