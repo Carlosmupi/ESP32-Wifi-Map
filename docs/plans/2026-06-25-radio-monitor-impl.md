@@ -152,8 +152,8 @@ extern void test_zero_interval_fires_every_call(void);
 ```
 
 Do not define `setUp()`, `tearDown()`, `setup()`, or `loop()` in this test file — see test_main.cpp:10-13.
-**Step 3:** Build and run.
 
+**Step 3:** Build and run.
 ```bash
 pio test -e native
 ```
@@ -741,8 +741,15 @@ def _safe_bssid(bssid: str) -> str:
     return cleaned or "unknown"
 
 
-def _ranked_bssids(ts: Timeseries) -> List[Tuple[str, int]]:
-    """Return BSSIDs sorted by descending sample count, then BSSID."""
+def _ranked_bssids(ts: Timeseries) -> List[Tuple[str, List[Tuple[int, int]]]]:
+    """Return BSSIDs sorted by descending sample count, then BSSID.
+
+    Each element of the result is ``(bssid, samples)`` where ``samples``
+    is the full ordered list of ``(timestamp_ms, rssi)`` pairs for that
+    BSSID (preserved from :data:`Timeseries`). The call site unpacks
+    each sample as ``(t, r)`` — the annotation must therefore be
+    ``List[Tuple[int, int]]`` per BSSID, not ``int``.
+    """
     return sorted(ts.items(), key=lambda kv: (-len(kv[1]), kv[0]))
 
 
@@ -927,7 +934,7 @@ MPLBACKEND=Agg python monitor.py logs/signal_map_20260625_142358.csv --kind chan
 
 ---
 
-## Phase 5: Documentation (4 tasks)
+## Phase 5: Documentation (5 tasks)
 
 ### Task 5.1: Write `docs/monitor-deferred.md`
 
@@ -1063,9 +1070,12 @@ per-BSSID sparkline grid.
 ### Workflow
 
 1. Open the serial monitor.
-2. Type a `!monitor on 5000` (interval is optional, default 5000 ms,
+2. Type `!monitor on 5000` (interval is optional, default 5000 ms,
    minimum 1000 ms) and press Enter. The firmware will set the
-   spot label to `monitor` and start scanning every 5 s.
+   spot label to `monitor` and start scanning with at least 5 s
+   between scans (the interval is the gap between scan *ends*;
+   a full-band scan takes ~4 s, so the effective period at 5 s
+   is ~9 s — see Task 2.3 in the implementation plan).
 3. Walk away. The LED still blinks on every scan.
 4. When done, type `!monitor off`.
 5. Run `python monitor.py logs/signal_map_<timestamp>.csv` to
@@ -1178,6 +1188,43 @@ git commit -m "ci: include monitor in pytest coverage scope"
 
 ---
 
+### Task 5.5: Add `monitor.py` to the mypy scope
+
+**Files:**
+- Modify: `pyproject.toml`
+
+**Step 1:** The mypy configuration at `pyproject.toml:35` only lists
+the `wifiscan` package, `capture.py`, and `heatmap.py`. Without
+`monitor.py` in the list, `python -m mypy` passes by silently
+ignoring the new module — false confidence. Fix the scope so the
+CI gate actually verifies the new code.
+
+Find:
+
+```toml
+files = ["wifiscan", "capture.py", "heatmap.py"]
+```
+
+Change to:
+
+```toml
+files = ["wifiscan", "capture.py", "heatmap.py", "monitor.py"]
+```
+
+Also update the comment block above the `[tool.mypy]` section so
+the next person reading it knows `monitor.py` is intentionally
+included (the comment currently enumerates the scripts and should
+list `monitor.py` too).
+
+**Step 2:** Commit.
+
+```bash
+git add pyproject.toml
+git commit -m "chore(mypy): include monitor.py in the type-check scope"
+```
+
+---
+
 ## Phase 6: Final verification (4 tasks)
 
 ### Task 6.1: Run all tests
@@ -1204,16 +1251,20 @@ firmware header and the Python schema are still in sync.
 The CI workflow (`.github/workflows/ci.yml:39`) runs `mypy` over the
 whole repo on every push. The new modules `wifiscan/timeseries.py` and
 `monitor.py` MUST pass type-checking before merge, otherwise CI fails
-silently from a local developer's perspective.
+silently from a local developer's perspective. Task 5.5 added
+`monitor.py` to the scope; both modules must now appear in mypy's
+output for the gate to mean anything.
 
 ```bash
 cd "C:/Dev/Embedded/projects/wifi-scanner-signal-map"
 python -m mypy
 ```
 
-**Expected:** Exits 0 with no errors. If a `Skipping analyzing` line
-appears for either new module, mypy is excluding it; fix the underlying
-type error rather than silencing it.
+**Expected:** Exits 0 with no errors. The output must mention
+`monitor.py` and `wifiscan/timeseries.py` (proof that they are
+in scope). If either file is silently absent from the output, the
+scope configuration has regressed and this gate is not actually
+verifying anything.
 
 ### Task 6.4: Verify the firmware builds (no upload)
 
