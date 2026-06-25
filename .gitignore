@@ -9,3 +9,7 @@ __pycache__/
 # Runtime capture output: CSVs written by capture.py and PNGs rendered
 # by heatmap.py. Reproducible from a fresh scan, never tracked.
 logs/
+
+# Isolated git worktrees (created by the using-git-worktrees skill for
+# feature branches; never tracked — see docs/plans/<date>-*-design.md).
+.worktrees/
