@@ -5,7 +5,7 @@ startup listing every column it will emit, then a sequence of CSV data
 rows per spot, then a footer comment summarising each spot::
 
     # spot_id,spot_label,timestamp_ms,ssid,bssid,rssi,channel,auth_mode,est_distance_m
-    1,living-room,12345,MyNet,aa:bb:cc:dd:ee:ff,-55,6,WPA2 PSK,2.34
+    1,living-room,12345,MyNet,aa:bb:cc:dd:ee:ff,-55,6,WPA2_PSK,2.34
     ...
     # spot=1 label=living-room ap_count=12 scan_ms=3456
 

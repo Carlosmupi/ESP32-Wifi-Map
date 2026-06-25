@@ -54,10 +54,15 @@ def timestamped_path() -> Path:
     return OUTPUT_DIR / f"signal_map_{ts}.csv"
 
 
-def write_rows(path: Path, rows: list[dict]) -> None:
+def write_header(path: Path) -> None:
     with path.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=list(EXPECTED_COLUMNS))
         writer.writeheader()
+
+
+def append_rows(path: Path, rows: list[dict]) -> None:
+    with path.open("a", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=list(EXPECTED_COLUMNS))
         for row in rows:
             writer.writerow(row)
 
@@ -112,7 +117,8 @@ def main() -> None:
                 if buffer:
                     if current_path is None:
                         current_path = timestamped_path()
-                    write_rows(current_path, buffer)
+                        write_header(current_path)
+                    append_rows(current_path, buffer)
                     print(f"[capture] wrote {len(buffer)} row(s) -> "
                           f"{current_path.name}")
                     all_rows.extend(buffer)
@@ -127,12 +133,15 @@ def main() -> None:
 
     except KeyboardInterrupt:
         print("\n[capture] Ctrl+C — stopping.")
-    finally:
-        # Flush any partial buffer.
+        # Flush any partial buffer. Append (do not overwrite) so partial
+        # captures don't lose the already-written spot data; missing the
+        # header row is acceptable — heatmap.py will surface it via the
+        # required-column check.
         if buffer:
             if current_path is None:
                 current_path = timestamped_path()
-            write_rows(current_path, buffer)
+                write_header(current_path)
+            append_rows(current_path, buffer)
             print(f"[capture] flushed {len(buffer)} partial row(s) -> "
                   f"{current_path.name}")
             all_rows.extend(buffer)

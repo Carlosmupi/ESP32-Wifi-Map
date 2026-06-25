@@ -48,7 +48,7 @@ except ImportError as exc:
 # ---------------------------------------------------------------------------
 RSSI_VMIN = -90
 RSSI_VMAX = -30
-DISTANCE_CAP_M = 50.0
+DISTANCE_CAP_M = 10.0  # must match the cap applied by wifi_scan_util.rssiToDistance()
 
 
 def _coerce_numeric(df: pd.DataFrame, ssid: str) -> tuple[pd.DataFrame, list[str]]:
