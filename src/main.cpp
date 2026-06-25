@@ -181,8 +181,9 @@ bool pollButtonPress() {
 
     if ((now_ms - g_last_debounce_ms) >= BUTTON_DEBOUNCE_MS) {
         if (raw != g_last_stable_button) {
+            const bool was_high = (g_last_stable_button == HIGH);
             g_last_stable_button = raw;
-            if (raw == LOW && g_last_stable_button == LOW) {
+            if (raw == LOW && was_high) {
                 // Wait until the button is released before arming another press.
                 return true;
             }
