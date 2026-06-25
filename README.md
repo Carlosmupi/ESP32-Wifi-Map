@@ -98,9 +98,76 @@ Type any of these in the serial monitor (or send them via `capture.py`) alongsid
 | `!ignore <ssid>` | Add an SSID to the runtime ignore list (filtered from scan output; in-memory, lost on reboot). |
 | `!unignore <ssid>` | Remove an SSID from the ignore list. |
 | `!ignorelist` | Print the current ignore list. |
+| `!scan` | Trigger a single scan on demand (silently dropped if a scan is already in flight). |
+| `!monitor on [ms]` | Start background scanning on a fixed cadence (default 5000 ms, minimum 1000 ms). The spot label is set to `monitor`. |
+| `!monitor off` | Stop background scanning. |
 | `!promisc on` / `!promisc off` | Enable/disable promiscuous-mode probe-request logging. |
 
 Unknown `!` commands echo `# unknown cmd`.
+
+
+## Monitor Mode
+
+Monitor mode is the time-series counterpart to the spatial survey.
+Instead of pressing BOOT at each spot, leave the ESP32 in one place
+and let it scan on a schedule. The resulting CSV is the same format
+as a survey session; a separate tool, `monitor.py`, renders a
+per-BSSID sparkline grid.
+
+### Workflow
+
+1. Open the serial monitor.
+2. Type `!monitor on 5000` (interval is optional, default 5000 ms,
+   minimum 1000 ms) and press Enter. The firmware will set the
+   spot label to `monitor` and start scanning with at least 5 s
+   between scans (the interval is the gap between scan *ends*;
+   a full-band scan takes ~4 s, so the effective period at 5 s
+   is ~9 s -- see Task 2.3 in the implementation plan).
+3. Walk away. The LED still blinks on every scan.
+4. When done, type `!monitor off`.
+5. Run `python monitor.py logs/signal_map_<timestamp>.csv` to
+   produce a sparkline grid.
+
+The CSV is captured automatically by `capture.py` running in parallel
+or can be captured by any other serial logger. A new session's
+filename is `signal_map_<YYYYMMDD_HHMMSS>.csv` under `logs/`.
+
+### Sparkline output
+
+```bash
+# Default: top 12 BSSIDs, write alongside the CSV.
+python monitor.py logs/signal_map_20260625_142358.csv
+
+# Include more BSSIDs.
+python monitor.py logs/signal_map_20260625_142358.csv --top 30
+```
+
+The output PNG is `<csv-stem>_sparkline.png` and contains a near-
+square grid of small line charts, one per BSSID, in the order of
+most-sampled first.
+
+### Triggering a scan on demand
+
+`!scan` (no arguments) triggers one scan immediately. Useful for
+scripted capture from the host or for forcing a fresh reading
+mid-session.
+
+### Deferred visualizations
+
+Three more `--kind` values are registered in `monitor.py` but
+raise `NotImplementedError`: `presence`, `channel`, `drift`. See
+`docs/monitor-deferred.md` for the design sketches and the issues
+that track them.
+
+### Session length and `spot_id` rollover
+
+The firmware's `spot_id` is a `uint16` (0 to 65535) and is incremented
+once per monitor-mode scan. At the default 5 s interval, it rolls over
+after about 91 hours of continuous capture; at the 1 s minimum, about
+18 hours. The CSV is unchanged across a rollover (the firmware just
+restarts counting from 0) but any analysis tool that treats `spot_id`
+as a global order will see a discontinuity. For sessions expected to
+run longer, capture into separate files.
 
 ## Python Tools
 

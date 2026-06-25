@@ -35,6 +35,20 @@ float rssiToDistance(int32_t rssi_dbm);
 // dest_size must be > 0; src may be NULL (no-op).
 void copyLabel(char* dest, size_t dest_size, const char* src);
 
+// Monotonic-time scheduler for the `!monitor` background-scan loop.
+// Pure function: takes the previous scan timestamp and the configured
+// interval (both uint32_t in milliseconds) and returns true iff the
+// caller should trigger another scan now. Rolling-over `now_ms` is
+// handled by the unsigned subtraction (subtraction wraps mod 2^32).
+//
+// Inlined because the body is one comparison and the call site is
+// the ESP32's `loop()`. Keeping it header-only avoids a translation
+// unit dependency for native tests.
+inline bool monitorTick(uint32_t last_scan_ms, uint32_t now_ms,
+                        uint32_t interval_ms) {
+    return (now_ms - last_scan_ms) >= interval_ms;
+}
+
 // Tiny testable seams so firmware code that depends on time or a digital
 // input can be unit-tested without dragging in the Arduino framework or a
 // connected board. The header stays free of <Arduino.h>: only the

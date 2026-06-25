@@ -34,6 +34,6 @@ jobs:
       - name: Install Python dev dependencies
         run: pip install -r requirements-dev.txt
       - name: Run pytest with coverage
-        run: pytest --cov=wifiscan --cov=capture --cov=heatmap tests/
+        run: pytest --cov=wifiscan --cov=capture --cov=heatmap --cov=monitor tests/
       - name: Run mypy type check
         run: mypy

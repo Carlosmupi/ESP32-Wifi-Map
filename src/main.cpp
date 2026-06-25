@@ -84,7 +84,22 @@ uint16_t    g_spot_id                             = 0;
 // probe-request sniffing via `!promisc on`. The sniffer callback and
 // logCurrentSpot() both consult this flag so an active scan can briefly
 // suspend promiscuous mode without losing the user's intent across scans.
-bool        g_promisc_on = false;
+bool        g_promisc_on      = false;
+// True while logCurrentSpot() is mid-scan. Guards against re-entry from
+// `!scan` or the `!monitor` background loop (issue #1's monitor-mode
+// extension: a `!scan` triggered while the radio is already busy is
+// silently dropped, and the monitor loop skips its tick).
+bool        g_scan_in_flight  = false;
+// Monitor mode (Phase 2 of the radio-monitor design). When `g_monitor_on`
+// is true, loop() periodically calls logCurrentSpot() on the cadence
+// given by g_monitor_interval_ms (gated by monitorTick from
+// wifi_scan_util). The label is overwritten to "monitor" so monitor-
+// mode rows are visually distinct in the captured CSV.
+bool        g_monitor_on          = false;
+uint32_t    g_monitor_interval_ms = 5000;
+uint32_t    g_last_monitor_scan_ms = 0;
+constexpr uint32_t MONITOR_MIN_INTERVAL_MS     = 1000;
+constexpr uint32_t MONITOR_DEFAULT_INTERVAL_MS = 5000;
 
 
 inline void ledOn()  { digitalWrite(LED_PIN, LED_ACTIVE_LOW ? LOW  : HIGH); }
@@ -94,6 +109,8 @@ inline void ledOff() { digitalWrite(LED_PIN, LED_ACTIVE_LOW ? HIGH : LOW ); }
 // mode helpers (issue #1) that are defined further down in this file.
 void snifferCallback(void* buf, wifi_promiscuous_pkt_type_t type);
 void setPromiscuousFilter();
+// Forward-declared so handleCommand() (above) can call !scan -> logCurrentSpot().
+void logCurrentSpot();
 
 // Brief single blink (100 ms on / 100 ms off) for label acknowledgement.
 inline void ledAckBlink() {
@@ -257,6 +274,55 @@ bool handleCommand(char* line) {
                               static_cast<unsigned>(i),
                               g_ignored_ssids[i]);
             }
+        }
+        Serial.flush();
+        return true;
+    }
+
+    if (strcmp(cmd, "!scan") == 0) {
+        // Trigger a scan on demand. If a scan is already running, the
+        // call is silently dropped to avoid re-entry (monitor mode).
+        if (g_scan_in_flight) {
+            Serial.println(F("# scan: busy"));
+        } else {
+            Serial.println(F("# scan: triggered"));
+            logCurrentSpot();
+        }
+        Serial.flush();
+        return true;
+    }
+
+    if (strcmp(cmd, "!monitor") == 0) {
+        char* sub = strtok(nullptr, " \t");
+        if (!sub) {
+            Serial.println(F("# cmd: missing on/off"));
+            Serial.flush();
+            return true;
+        }
+        if (strcmp(sub, "on") == 0) {
+            char* ms_arg = strtok(nullptr, " \t");
+            uint32_t ms = MONITOR_DEFAULT_INTERVAL_MS;
+            if (ms_arg) {
+                const long v = strtol(ms_arg, nullptr, 10);
+                if (v < static_cast<long>(MONITOR_MIN_INTERVAL_MS)) {
+                    Serial.println(F("# monitor: out of range (min 1000)"));
+                    Serial.flush();
+                    return true;
+                }
+                ms = static_cast<uint32_t>(v);
+            }
+            g_monitor_interval_ms  = ms;
+            g_last_monitor_scan_ms = millis();
+            g_monitor_on           = true;
+            // Synthetic label so the CSV clearly identifies monitor rows.
+            copyLabel(g_spot_label, sizeof(g_spot_label), "monitor");
+            Serial.printf("# monitor=on interval_ms=%u\n",
+                          static_cast<unsigned>(ms));
+        } else if (strcmp(sub, "off") == 0) {
+            g_monitor_on = false;
+            Serial.println(F("# monitor=off"));
+        } else {
+            Serial.println(F("# cmd: missing on/off"));
         }
         Serial.flush();
         return true;
@@ -475,6 +541,7 @@ void printApRow(uint16_t spot_id, const char* spot_label, uint32_t ts_ms,
 // Run one scan at the current spot and emit CSV rows to serial.
 void logCurrentSpot() {
     ledOn();
+    g_scan_in_flight = true;
     const uint32_t scan_start = millis();
     esp_task_wdt_reset();
 
@@ -510,6 +577,7 @@ void logCurrentSpot() {
         ++g_spot_id;
         esp_task_wdt_reset();
         ledConfirmBlinks();
+        g_scan_in_flight = false;
         return;
     }
 
@@ -561,6 +629,7 @@ void logCurrentSpot() {
     ++g_spot_id;
     ledConfirmBlinks();
     esp_task_wdt_reset();
+    g_scan_in_flight = false;
 }
 
 }  // namespace
@@ -606,6 +675,19 @@ void loop() {
     static DebouncedButton  boot(button_pin, clock, BUTTON_DEBOUNCE_MS);
 
     readSerialLabel();
+
+    // Monitor-mode background scan. Evaluated on every loop iteration
+    // independent of the button check, so the !monitor schedule runs
+    // regardless of BOOT activity. `!g_scan_in_flight` guards against
+    // re-entry if a manual `!scan` is mid-flight. The timestamp is
+    // updated AFTER the scan returns, so the interval is the gap
+    // between scan *ends* (a full-band scan takes ~4 s; setting it
+    // before would re-fire the moment the scan finishes).
+    if (g_monitor_on && !g_scan_in_flight &&
+        monitorTick(g_last_monitor_scan_ms, millis(), g_monitor_interval_ms)) {
+        logCurrentSpot();
+        g_last_monitor_scan_ms = millis();
+    }
 
     if (boot.pressed()) {
         logCurrentSpot();

@@ -7,14 +7,19 @@
  * define main(); the per-function files declare their test_xxx()
  * routines here and we wire them into Unity here.
  *
- * setUp() and tearDown() are intentionally NOT defined: the weak
- * empty versions emitted by unity_config.c are sufficient for this
- * suite (each test owns its buffers and frees what it allocates).
+ * setUp() and tearDown() are defined here as empty functions. The
+ * weak empty versions emitted by unity_config.c do not resolve
+ * correctly on Windows/MinGW (PE format handles weak symbols in
+ * object files differently from ELF), so we provide explicit
+ * definitions that work on all platforms.
  */
 
 #include <unity.h>
 
 #include "wifi_scan_util.h"
+
+void setUp(void) {}
+void tearDown(void) {}
 
 // ---- csvEscape (test_csv_escape.cpp) ----------------------------------
 extern void test_csv_escape_empty_string_yields_empty_alloc(void);
@@ -26,11 +31,13 @@ extern void test_csv_escape_embedded_cr_wraps_in_quotes(void);
 extern void test_csv_escape_mixed_special_chars_quotes_and_doubles(void);
 
 // ---- rssiToDistance (test_rssi_to_distance.cpp) -----------------------
-extern void test_rssi_at_reference_is_capped_to_cap(void);
-extern void test_rssi_ten_above_reference_is_capped_to_cap(void);
-extern void test_rssi_ten_below_reference_is_capped_to_cap(void);
+// Updated in commit 6b205da: RSSI_REFERENCE_DBM sign corrected from
+// -45 to 45; tests renamed to match the corrected behaviour.
+extern void test_rssi_at_reference_returns_one_meter(void);
+extern void test_rssi_ten_above_reference_is_closer(void);
+extern void test_rssi_ten_below_reference_is_farther(void);
 extern void test_rssi_very_weak_is_capped_to_cap(void);
-extern void test_rssi_exactly_at_cap_value(void);
+extern void test_rssi_at_cap_boundary_clamps(void);
 extern void test_rssi_extreme_positive_clamped_to_floor(void);
 
 // ---- authModeString (test_auth_mode_string.cpp) -----------------------
@@ -45,6 +52,13 @@ extern void test_auth_mode_wpa2_wpa3_psk_returns_WPA2_WPA3_PSK(void);
 extern void test_auth_mode_wapi_psk_returns_WAPI_PSK(void);
 extern void test_auth_mode_wpa3_ent_192_returns_WPA3_ENT_192(void);
 extern void test_auth_mode_unknown_returns_UNKNOWN(void);
+
+// ---- monitorTick (test_monitor_tick.cpp) -------------------------
+extern void test_first_call_after_interval_fires(void);
+extern void test_just_before_interval_does_not_fire(void);
+extern void test_repeat_call_without_time_advance_does_not_fire(void);
+extern void test_unsigned_rollover_fires(void);
+extern void test_zero_interval_fires_every_call(void);
 
 // ---- copyLabel (test_copy_label.cpp) ----------------------------------
 extern void test_copy_label_short_input_is_copied_verbatim(void);
@@ -67,11 +81,12 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_csv_escape_mixed_special_chars_quotes_and_doubles);
 
     // rssiToDistance: path-loss model capped at DISTANCE_CAP_M.
-    RUN_TEST(test_rssi_at_reference_is_capped_to_cap);
-    RUN_TEST(test_rssi_ten_above_reference_is_capped_to_cap);
-    RUN_TEST(test_rssi_ten_below_reference_is_capped_to_cap);
+    // Test names updated for the corrected sign convention (6b205da).
+    RUN_TEST(test_rssi_at_reference_returns_one_meter);
+    RUN_TEST(test_rssi_ten_above_reference_is_closer);
+    RUN_TEST(test_rssi_ten_below_reference_is_farther);
     RUN_TEST(test_rssi_very_weak_is_capped_to_cap);
-    RUN_TEST(test_rssi_exactly_at_cap_value);
+    RUN_TEST(test_rssi_at_cap_boundary_clamps);
     RUN_TEST(test_rssi_extreme_positive_clamped_to_floor);
 
     // authModeString: stable CSV token for every ESP32 wifi_auth_mode_t
@@ -87,6 +102,15 @@ int main(int /*argc*/, char** /*argv*/) {
     RUN_TEST(test_auth_mode_wapi_psk_returns_WAPI_PSK);
     RUN_TEST(test_auth_mode_wpa3_ent_192_returns_WPA3_ENT_192);
     RUN_TEST(test_auth_mode_unknown_returns_UNKNOWN);
+
+    // monitorTick: pure interval scheduler for the !monitor background
+    // loop. Tested in isolation; the firmware's loop() wires the
+    // monotonic-clock read into the same call.
+    RUN_TEST(test_first_call_after_interval_fires);
+    RUN_TEST(test_just_before_interval_does_not_fire);
+    RUN_TEST(test_repeat_call_without_time_advance_does_not_fire);
+    RUN_TEST(test_unsigned_rollover_fires);
+    RUN_TEST(test_zero_interval_fires_every_call);
 
     // copyLabel: bounded, NUL-terminating copy with embedded-NUL + NULL
     // safety mirrors the legacy Arduino-String length()-bounded behaviour.
