@@ -124,6 +124,8 @@ def main() -> None:
     missing = required - set(df.columns)
     if missing:
         raise SystemExit(f"CSV missing required columns: {sorted(missing)}")
+    # Hidden networks can arrive with an empty SSID field.
+    df["ssid"] = df["ssid"].fillna("hidden").replace("", "hidden")
 
     coords = None
     if args.coords is not None:
