@@ -37,10 +37,12 @@ import capture  # noqa: E402  (after sys.path manipulation)
 from wifiscan.schema import (  # noqa: E402
     EXPECTED_COLUMNS,
     HEADER_LINE,
+    SCHEMA_VERSION,
     _safe_field,
     check_header,
     parse_data_row,
     parse_footer,
+    parse_schema_version,
     safe_fieldname,
 )
 
@@ -387,3 +389,135 @@ def test_parse_data_row_applies_safe_field_to_at_prefixed_label() -> None:
     # Negative RSSI must NOT be prefixed — it is firmware-controlled and
     # prefixing would corrupt downstream numeric parsing.
     assert row["rssi"] == "-55"
+
+
+# ---------------------------------------------------------------------------
+# Schema version handshake (issue #16)
+# ---------------------------------------------------------------------------
+
+def test_schema_version_constant_is_one() -> None:
+    """The canonical schema version is pinned to 1 (issue #16 baseline)."""
+    assert SCHEMA_VERSION == 1
+
+
+def test_parse_schema_version_well_formed() -> None:
+    """A '# schema_version=N' line yields the integer N."""
+    assert parse_schema_version("# schema_version=1") == 1
+    assert parse_schema_version("# schema_version=42") == 42
+
+
+def test_parse_schema_version_tolerates_extra_whitespace() -> None:
+    """A single space after '#' and trailing whitespace still match."""
+    assert parse_schema_version("#  schema_version=1") == 1
+    assert parse_schema_version("# schema_version=1  ") == 1
+
+
+def test_parse_schema_version_not_a_version_line() -> None:
+    """Non-version lines (header, footer, data row) return None."""
+    assert parse_schema_version(HEADER_LINE) is None
+    assert parse_schema_version("# spot=1 label=x ap_count=2 scan_ms=3") is None
+    assert parse_schema_version("1,living-room,12345,MyNet,aa:bb,-55,6,WPA2,2.34") is None
+    assert parse_schema_version("") is None
+    assert parse_schema_version("# schema_version=abc") is None
+
+
+def test_version_check_message_match() -> None:
+    """Matching firmware/capture versions log an OK line."""
+    msg = capture.version_check_message(SCHEMA_VERSION)
+    assert msg == f"[capture] schema_version={SCHEMA_VERSION}"
+    assert "WARNING" not in msg
+
+
+def test_version_check_message_mismatch_warns_but_continues() -> None:
+    """A mismatch logs a WARNING but the message does not signal abort."""
+    msg = capture.version_check_message(99, expected=SCHEMA_VERSION)
+    assert msg.startswith("[capture] WARNING: schema_version mismatch")
+    assert "99" in msg and str(SCHEMA_VERSION) in msg
+    assert "continuing anyway" in msg
+
+
+def test_version_check_message_legacy_missing_line() -> None:
+    """No version line (legacy firmware) yields a one-line warning."""
+    msg = capture.version_check_message(None, expected=SCHEMA_VERSION)
+    assert msg.startswith("[capture] WARNING: no schema_version line seen")
+    assert str(SCHEMA_VERSION) in msg
+    # One line only — no embedded newlines.
+    assert "\n" not in msg
+
+
+def test_version_check_message_default_expected_matches_schema() -> None:
+    """The default ``expected`` argument is wifiscan.schema.SCHEMA_VERSION."""
+    assert capture.version_check_message(SCHEMA_VERSION) == \
+        capture.version_check_message(SCHEMA_VERSION, SCHEMA_VERSION)
+
+
+# ---------------------------------------------------------------------------
+# End-to-end-ish handshake simulation through capture's boot-line handling.
+# Drives the same pre-header logic the real main loop uses, without a
+# serial port: feed boot lines one at a time and confirm the version is
+# captured and the right message is produced when the header arrives.
+# ---------------------------------------------------------------------------
+
+def _simulate_boot_handshake(boot_lines: list[str]) -> tuple[bool, int | None, str]:
+    """Replay capture.py's pre-header logic over a list of boot lines.
+
+    Returns ``(header_seen, fw_version, version_msg)`` mirroring what the
+    real main loop would produce.  This exercises the same
+    ``parse_schema_version`` + ``HEADER_LINE`` + ``version_check_message``
+    calls the live loop makes, so a regression in any of them fails here.
+    """
+    header_seen = False
+    fw_schema_version: int | None = None
+    version_msg = ""
+    for line in boot_lines:
+        if not line:
+            continue
+        if not header_seen and fw_schema_version is None:
+            v = parse_schema_version(line)
+            if v is not None:
+                fw_schema_version = v
+        if not header_seen:
+            if line == HEADER_LINE:
+                header_seen = True
+                version_msg = capture.version_check_message(fw_schema_version)
+            continue
+    return header_seen, fw_schema_version, version_msg
+
+
+def test_boot_handshake_version_then_header() -> None:
+    """Firmware prints '# schema_version=1' then the column header."""
+    boot = [
+        "# Wi-Fi Scanner with Signal Map",
+        "# fw_version=0.2.0",
+        "# schema_version=1",
+        HEADER_LINE,
+    ]
+    seen, fw, msg = _simulate_boot_handshake(boot)
+    assert seen is True
+    assert fw == 1
+    assert msg == "[capture] schema_version=1"
+
+
+def test_boot_handshake_legacy_no_version_line() -> None:
+    """Legacy firmware omits the version line; header still seen, warning emitted."""
+    boot = [
+        "# Wi-Fi Scanner with Signal Map",
+        HEADER_LINE,
+    ]
+    seen, fw, msg = _simulate_boot_handshake(boot)
+    assert seen is True
+    assert fw is None
+    assert msg.startswith("[capture] WARNING: no schema_version line seen")
+
+
+def test_boot_handshake_version_mismatch_continues() -> None:
+    """A future firmware advertising version 2 warns but still accepts the header."""
+    boot = [
+        "# schema_version=2",
+        HEADER_LINE,
+    ]
+    seen, fw, msg = _simulate_boot_handshake(boot)
+    assert seen is True
+    assert fw == 2
+    assert msg.startswith("[capture] WARNING: schema_version mismatch")
+    assert "continuing anyway" in msg

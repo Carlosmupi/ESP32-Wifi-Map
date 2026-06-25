@@ -34,8 +34,10 @@ except ImportError as exc:
 from wifiscan.schema import (
     EXPECTED_COLUMNS,
     HEADER_LINE,
+    SCHEMA_VERSION,
     parse_data_row,
     parse_footer,
+    parse_schema_version,
 )
 
 
@@ -107,6 +109,27 @@ def append_rows(path: Path, rows: list[dict]) -> None:
 # ---------------------------------------------------------------------------
 # Main loop
 # ---------------------------------------------------------------------------
+
+def version_check_message(fw_version: int | None,
+                          expected: int = SCHEMA_VERSION) -> str:
+    """Build the log line for the firmware/Python schema-version handshake.
+
+    * ``fw_version is None`` — no ``# schema_version=N`` line was seen
+      before the column header (legacy firmware); emit a one-line warning.
+    * ``fw_version == expected`` — emit an OK line.
+    * otherwise — emit a WARNING (mismatch) but do NOT instruct the caller
+      to abort; capture continues so data is not lost on a minor drift.
+    """
+    if fw_version is None:
+        return (f"[capture] WARNING: no schema_version line seen "
+                f"(expected {expected}); assuming legacy firmware.")
+    if fw_version == expected:
+        return f"[capture] schema_version={fw_version}"
+    return (f"[capture] WARNING: schema_version mismatch — firmware "
+            f"reported {fw_version}, capture.py expects {expected}; "
+            f"continuing anyway.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", default=DEFAULT_PORT,
@@ -125,6 +148,7 @@ def main() -> None:
     print("Press Ctrl+C to stop.\n")
 
     header_seen = False
+    fw_schema_version: int | None = None
     buffer: list[dict] = []
     all_rows: list[dict] = []
     current_path: Path | None = None
@@ -142,10 +166,19 @@ def main() -> None:
             if not line:
                 continue
 
+            # Pre-header boot handshake: capture the firmware's advertised
+            # schema_version line (printed immediately before the column
+            # header). A missing line is handled after the header arrives.
+            if not header_seen and fw_schema_version is None:
+                v = parse_schema_version(line)
+                if v is not None:
+                    fw_schema_version = v
+
             # Header validation.
             if not header_seen:
                 if line == HEADER_LINE:
                     print("[capture] header OK — est_distance_m present")
+                    print(version_check_message(fw_schema_version))
                     header_seen = True
                 continue
 

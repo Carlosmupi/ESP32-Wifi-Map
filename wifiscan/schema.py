@@ -27,8 +27,10 @@ from typing import Optional
 __all__ = [
     "EXPECTED_COLUMNS",
     "HEADER_LINE",
+    "SCHEMA_VERSION",
     "parse_data_row",
     "parse_footer",
+    "parse_schema_version",
     "safe_fieldname",
     "check_header",
     "_safe_field",
@@ -56,6 +58,20 @@ EXPECTED_COLUMNS: tuple[str, ...] = (
 #: within Python — the firmware side is verified by
 #: ``python -m wifiscan.schema --check-header``.
 HEADER_LINE: str = "# " + ",".join(EXPECTED_COLUMNS)
+
+
+#: Schema version advertised by the firmware at boot (see
+#: ``src/main.cpp`` ``setup()``) as a ``# schema_version=N`` line printed
+#: immediately before :data:`HEADER_LINE`.  ``capture.py`` reads it and
+#: compares against this constant; a mismatch logs a WARNING but does not
+#: abort (a missing line, as from a legacy firmware, also warns).  Bump
+#: this whenever the on-wire column format changes in a way a consumer
+#: must know about.
+SCHEMA_VERSION: int = 1
+
+
+#: Regex matching the firmware's ``# schema_version=N`` boot line.
+SCHEMA_VERSION_RE = re.compile(r"^#\s*schema_version=(?P<version>\d+)\s*$")
 
 
 # Per-spot footer emitted by the firmware's ``logCurrentSpot()``:
@@ -151,6 +167,19 @@ def safe_fieldname(ssid: str) -> str:
 def check_header(line: str) -> bool:
     """Return ``True`` iff ``line`` is byte-identical to :data:`HEADER_LINE`."""
     return line == HEADER_LINE
+
+
+def parse_schema_version(line: str) -> Optional[int]:
+    """Parse a ``# schema_version=N`` boot line into the integer ``N``.
+
+    Returns ``None`` if ``line`` does not match the version-line format.
+    Used by ``capture.py`` to detect the firmware's advertised schema
+    version during the boot handshake.
+    """
+    match = SCHEMA_VERSION_RE.match(line)
+    if match is None:
+        return None
+    return int(match.group("version"))
 
 
 def _build_parser() -> argparse.ArgumentParser:

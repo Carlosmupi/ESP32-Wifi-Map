@@ -43,6 +43,11 @@ constexpr bool     LED_ACTIVE_LOW       = true;
 constexpr uint8_t  BUTTON_PIN           = 0;
 constexpr uint32_t BUTTON_DEBOUNCE_MS   = 50UL;
 
+// CSV schema version advertised at boot as "# schema_version=N",
+// immediately before the column header line. Must match
+// wifiscan.schema.SCHEMA_VERSION; verified by tools/check_schema.py.
+constexpr int      SCHEMA_VERSION       = 1;
+
 // Spot label length cap (kept short so a row fits in one terminal line).
 constexpr uint8_t  SPOT_LABEL_MAX_LEN   = 31;
 
@@ -205,6 +210,7 @@ void setup() {
     Serial.println(F("# Freenove ESP32 WROVER | CH340 on COM10 @ 115200"));
     Serial.printf("# fw_version=%s\n", FIRMWARE_VERSION);
     Serial.printf("# mac=%s\n", WiFi.macAddress().c_str());
+    Serial.printf("# schema_version=%d\n", SCHEMA_VERSION);
     Serial.println(F("# spot_id,spot_label,timestamp_ms,ssid,bssid,rssi,channel,auth_mode,est_distance_m"));
     Serial.flush();
 
