@@ -68,6 +68,20 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _repo_root_on_path() -> None:
+    """Make ``wifiscan`` importable regardless of the caller's cwd."""
+    repo_root = str(REPO_ROOT)
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+
+
+def _schema_version() -> int:
+    """Read SCHEMA_VERSION from wifiscan.schema so the regenerated file stays in sync."""
+    _repo_root_on_path()
+    from wifiscan.schema import SCHEMA_VERSION  # noqa: E402
+    return SCHEMA_VERSION
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
 
@@ -83,7 +97,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
-    args.out.write_text(HEADER_COMMENT + header + "\n", encoding="utf-8")
+    version_line = f"# schema_version={_schema_version()}\n"
+    args.out.write_text(HEADER_COMMENT + version_line + header + "\n",
+                        encoding="utf-8")
     print(f"wrote {args.out} ({len(header)} chars): {header}")
     return 0
 

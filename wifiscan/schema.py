@@ -51,6 +51,8 @@ EXPECTED_COLUMNS: tuple[str, ...] = (
     "channel",
     "auth_mode",
     "est_distance_m",
+    "frame_type",
+    "src_mac",
 )
 
 #: Exact header string the firmware prints (see ``src/main.cpp:281``).
@@ -67,7 +69,7 @@ HEADER_LINE: str = "# " + ",".join(EXPECTED_COLUMNS)
 #: abort (a missing line, as from a legacy firmware, also warns).  Bump
 #: this whenever the on-wire column format changes in a way a consumer
 #: must know about.
-SCHEMA_VERSION: int = 1
+SCHEMA_VERSION: int = 2
 
 
 #: Regex matching the firmware's ``# schema_version=N`` boot line.
@@ -115,7 +117,7 @@ def _safe_field(value: str) -> str:
 #: character, and are left untouched — prefixing e.g. ``rssi="-55"``
 #: would corrupt downstream numeric parsing (``pd.to_numeric``).
 _SAFE_COLUMNS: frozenset[str] = frozenset(
-    {"spot_label", "ssid", "bssid", "auth_mode"}
+    {"spot_label", "ssid", "bssid", "auth_mode", "frame_type", "src_mac"}
 )
 
 

@@ -68,6 +68,8 @@ def make_row(
     channel: str = "6",
     auth_mode: str = "WPA2_PSK",
     est_distance_m: str = "2.34",
+    frame_type: str = "ap",
+    src_mac: str = "",
 ) -> dict:
     """Build a dict matching ``EXPECTED_COLUMNS`` for DictWriter-based append."""
     return {
@@ -80,6 +82,8 @@ def make_row(
         "channel": channel,
         "auth_mode": auth_mode,
         "est_distance_m": est_distance_m,
+        "frame_type": frame_type,
+        "src_mac": src_mac,
     }
 
 
@@ -183,8 +187,8 @@ def test_check_header_malformed_no_match() -> None:
 # ---------------------------------------------------------------------------
 
 def test_parse_data_row_well_formed() -> None:
-    """A 9-field row maps cleanly to EXPECTED_COLUMNS."""
-    line = "1,living-room,12345,MyNet,aa:bb:cc:dd:ee:ff,-55,6,WPA2_PSK,2.34"
+    """An 11-field row maps cleanly to EXPECTED_COLUMNS."""
+    line = "1,living-room,12345,MyNet,aa:bb:cc:dd:ee:ff,-55,6,WPA2_PSK,2.34,ap,"
     row = parse_data_row(line)
     assert row is not None
     assert row == make_row()
@@ -194,19 +198,19 @@ def test_parse_data_row_well_formed() -> None:
 def test_parse_data_row_escaped_ssid_with_comma() -> None:
     """SSID containing a comma is CSV-quoted; reader must unquote it."""
     line = (
-        '1,living-room,12345,"My,Net",aa:bb:cc:dd:ee:ff,-55,6,WPA2_PSK,2.34'
+        '1,living-room,12345,"My,Net",aa:bb:cc:dd:ee:ff,-55,6,WPA2_PSK,2.34,ap,'
     )
     row = parse_data_row(line)
     assert row is not None
     assert row["ssid"] == "My,Net"
-    # Field count still 9 after unescaping.
+    # Field count still 11 after unescaping.
     assert len(row) == len(EXPECTED_COLUMNS)
 
 
 def test_parse_data_row_escaped_ssid_with_embedded_quote() -> None:
     """SSID containing a double-quote is escaped as '""' inside a quoted field."""
     line = (
-        '1,living-room,12345,"My""Net",aa:bb:cc:dd:ee:ff,-55,6,WPA2_PSK,2.34'
+        '1,living-room,12345,"My""Net",aa:bb:cc:dd:ee:ff,-55,6,WPA2_PSK,2.34,ap,'
     )
     row = parse_data_row(line)
     assert row is not None
@@ -223,7 +227,15 @@ def test_parse_data_row_wrong_arity_8() -> None:
 def test_parse_data_row_wrong_arity_10() -> None:
     """A 10-field row is rejected — same reason."""
     line = (
-        "1,living-room,12345,MyNet,aa:bb:cc:dd:ee:ff,-55,6,WPA2_PSK,2.34,oops"
+        "1,living-room,12345,MyNet,aa:bb:cc:dd:ee:ff,-55,6,WPA2_PSK,2.34"
+    )
+    assert parse_data_row(line) is None
+
+
+def test_parse_data_row_wrong_arity_12() -> None:
+    """A 12-field row is rejected — same reason."""
+    line = (
+        "1,living-room,12345,MyNet,aa:bb:cc:dd:ee:ff,-55,6,WPA2_PSK,2.34,ap,,oops"
     )
     assert parse_data_row(line) is None
 
@@ -237,6 +249,32 @@ def test_parse_data_row_footer_shaped_line() -> None:
     """A '# spot=...' footer comment is NOT a data row — parser must say None."""
     footer_like = "# spot=1 label=living-room ap_count=12 scan_ms=3456"
     assert parse_data_row(footer_like) is None
+
+
+def test_parse_data_row_probe_request() -> None:
+    """A probe_req row carries frame_type='probe_req' and the client src_mac."""
+    # Firmware emits empty bssid and auth_mode for probe requests, and the
+    # SSID may be empty (wildcard probe).
+    line = "1,living-room,12345,MyNet,,-55,6,,2.34,probe_req,11:22:33:44:55:66"
+    row = parse_data_row(line)
+    assert row is not None
+    assert row["frame_type"] == "probe_req"
+    assert row["src_mac"] == "11:22:33:44:55:66"
+    assert row["bssid"] == ""
+    assert row["auth_mode"] == ""
+    assert row["ssid"] == "MyNet"
+    assert len(row) == len(EXPECTED_COLUMNS)
+
+
+def test_parse_data_row_probe_request_wildcard_ssid() -> None:
+    """A wildcard (null SSID) probe request parses with an empty ssid and bssid."""
+    line = "1,living-room,12345,,,-55,6,,2.34,probe_req,11:22:33:44:55:66"
+    row = parse_data_row(line)
+    assert row is not None
+    assert row["frame_type"] == "probe_req"
+    assert row["ssid"] == ""
+    assert row["bssid"] == ""
+    assert row["src_mac"] == "11:22:33:44:55:66"
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +308,7 @@ def test_parse_footer_partial_missing_label() -> None:
 
 def test_parse_footer_not_a_footer() -> None:
     """A plain CSV data row is not a footer — parser returns None."""
-    line = "1,living-room,12345,MyNet,aa:bb:cc:dd:ee:ff,-55,6,WPA2_PSK,2.34"
+    line = "1,living-room,12345,MyNet,aa:bb:cc:dd:ee:ff,-55,6,WPA2_PSK,2.34,ap,"
     assert parse_footer(line) is None
 
 
@@ -366,13 +404,14 @@ def test_parse_data_row_applies_safe_field_to_injected_ssid() -> None:
     # _safe_field prefixes it.
     line = (
         '1,living-room,12345,"=HYPERLINK(""http://evil"",""x"")",'
-        'aa:bb:cc:dd:ee:ff,-55,6,WPA2_PSK,2.34'
+        'aa:bb:cc:dd:ee:ff,-55,6,WPA2_PSK,2.34,ap,'
     )
     row = parse_data_row(line)
     assert row is not None
     assert row["ssid"] == '\'=HYPERLINK("http://evil","x")'
     # A non-injected free-text field is unchanged.
     assert row["auth_mode"] == "WPA2_PSK"
+    assert row["frame_type"] == "ap"
     # A numeric field is left untouched (no leading-quote corruption).
     assert row["rssi"] == "-55"
 
@@ -380,7 +419,7 @@ def test_parse_data_row_applies_safe_field_to_injected_ssid() -> None:
 def test_parse_data_row_applies_safe_field_to_at_prefixed_label() -> None:
     """A spot_label beginning with '@' is also mitigated; numeric rssi is not."""
     line = (
-        '1,@evil-label,12345,MyNet,aa:bb:cc:dd:ee:ff,-55,6,WPA2_PSK,2.34'
+        '1,@evil-label,12345,MyNet,aa:bb:cc:dd:ee:ff,-55,6,WPA2_PSK,2.34,ap,'
     )
     row = parse_data_row(line)
     assert row is not None
@@ -395,9 +434,9 @@ def test_parse_data_row_applies_safe_field_to_at_prefixed_label() -> None:
 # Schema version handshake (issue #16)
 # ---------------------------------------------------------------------------
 
-def test_schema_version_constant_is_one() -> None:
-    """The canonical schema version is pinned to 1 (issue #16 baseline)."""
-    assert SCHEMA_VERSION == 1
+def test_schema_version_constant_is_two() -> None:
+    """The canonical schema version is pinned to 2 (issue #1: probe-request logging)."""
+    assert SCHEMA_VERSION == 2
 
 
 def test_parse_schema_version_well_formed() -> None:
@@ -416,7 +455,7 @@ def test_parse_schema_version_not_a_version_line() -> None:
     """Non-version lines (header, footer, data row) return None."""
     assert parse_schema_version(HEADER_LINE) is None
     assert parse_schema_version("# spot=1 label=x ap_count=2 scan_ms=3") is None
-    assert parse_schema_version("1,living-room,12345,MyNet,aa:bb,-55,6,WPA2,2.34") is None
+    assert parse_schema_version("1,living-room,12345,MyNet,aa:bb,-55,6,WPA2,2.34,ap,") is None
     assert parse_schema_version("") is None
     assert parse_schema_version("# schema_version=abc") is None
 
@@ -485,17 +524,17 @@ def _simulate_boot_handshake(boot_lines: list[str]) -> tuple[bool, int | None, s
 
 
 def test_boot_handshake_version_then_header() -> None:
-    """Firmware prints '# schema_version=1' then the column header."""
+    """Firmware prints '# schema_version=2' then the column header."""
     boot = [
         "# Wi-Fi Scanner with Signal Map",
         "# fw_version=0.2.0",
-        "# schema_version=1",
+        "# schema_version=2",
         HEADER_LINE,
     ]
     seen, fw, msg = _simulate_boot_handshake(boot)
     assert seen is True
-    assert fw == 1
-    assert msg == "[capture] schema_version=1"
+    assert fw == 2
+    assert msg == "[capture] schema_version=2"
 
 
 def test_boot_handshake_legacy_no_version_line() -> None:
@@ -511,13 +550,13 @@ def test_boot_handshake_legacy_no_version_line() -> None:
 
 
 def test_boot_handshake_version_mismatch_continues() -> None:
-    """A future firmware advertising version 2 warns but still accepts the header."""
+    """A future firmware advertising version 3 warns but still accepts the header."""
     boot = [
-        "# schema_version=2",
+        "# schema_version=3",
         HEADER_LINE,
     ]
     seen, fw, msg = _simulate_boot_handshake(boot)
     assert seen is True
-    assert fw == 2
+    assert fw == 3
     assert msg.startswith("[capture] WARNING: schema_version mismatch")
     assert "continuing anyway" in msg

@@ -50,6 +50,8 @@ def make_row(
     timestamp_ms: int = 1_000,
     channel: int = 6,
     auth_mode: str = "WPA2_PSK",
+    frame_type: str = "ap",
+    src_mac: str = "",
 ) -> dict:
     """Return one data-row dict keyed by every column in EXPECTED_COLUMNS."""
     return {
@@ -62,6 +64,8 @@ def make_row(
         "channel": channel,
         "auth_mode": auth_mode,
         "est_distance_m": est_distance_m,
+        "frame_type": frame_type,
+        "src_mac": src_mac,
     }
 
 
@@ -246,8 +250,8 @@ class TestRequiredColumns:
         rows = [
             {k: i for k, i in zip(EXPECTED_COLUMNS, row)}
             for row in [
-                (1, "s1", 1000, "A", "aa", -50, 6, "WPA2_PSK", 1.0),
-                (1, "s2", 2000, "A", "bb", -60, 6, "WPA2_PSK", 2.0),
+                (1, "s1", 1000, "A", "aa", -50, 6, "WPA2_PSK", 1.0, "ap", ""),
+                (1, "s2", 2000, "A", "bb", -60, 6, "WPA2_PSK", 2.0, "ap", ""),
             ]
         ]
         # Write the rows minus the 'rssi' column.

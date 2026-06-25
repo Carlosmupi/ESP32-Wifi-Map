@@ -31,6 +31,8 @@
 #include <WiFi.h>
 #include <math.h>
 #include <esp_task_wdt.h>
+#include "esp_wifi.h"
+#include "esp_wifi_types.h"
 #define FIRMWARE_VERSION "0.2.0"
 
 namespace {
@@ -46,7 +48,7 @@ constexpr uint32_t BUTTON_DEBOUNCE_MS   = 50UL;
 // CSV schema version advertised at boot as "# schema_version=N",
 // immediately before the column header line. Must match
 // wifiscan.schema.SCHEMA_VERSION; verified by tools/check_schema.py.
-constexpr int      SCHEMA_VERSION       = 1;
+constexpr int      SCHEMA_VERSION       = 2;
 
 // Spot label length cap (kept short so a row fits in one terminal line).
 constexpr uint8_t  SPOT_LABEL_MAX_LEN   = 31;
@@ -78,9 +80,20 @@ uint8_t  g_ignored_count = 0;
 char        g_spot_label[SPOT_LABEL_MAX_LEN + 1] = "default";
 uint16_t    g_spot_id                             = 0;
 
+// Promiscuous-mode state (issue #1). True while the host has enabled
+// probe-request sniffing via `!promisc on`. The sniffer callback and
+// logCurrentSpot() both consult this flag so an active scan can briefly
+// suspend promiscuous mode without losing the user's intent across scans.
+bool        g_promisc_on = false;
+
 
 inline void ledOn()  { digitalWrite(LED_PIN, LED_ACTIVE_LOW ? LOW  : HIGH); }
 inline void ledOff() { digitalWrite(LED_PIN, LED_ACTIVE_LOW ? HIGH : LOW ); }
+
+// Forward declarations so handleCommand() can reference the promiscuous-
+// mode helpers (issue #1) that are defined further down in this file.
+void snifferCallback(void* buf, wifi_promiscuous_pkt_type_t type);
+void setPromiscuousFilter();
 
 // Brief single blink (100 ms on / 100 ms off) for label acknowledgement.
 inline void ledAckBlink() {
@@ -249,6 +262,30 @@ bool handleCommand(char* line) {
         return true;
     }
 
+    if (strcmp(cmd, "!promisc") == 0) {
+        char* arg = strtok(nullptr, " \t");
+        if (!arg) {
+            Serial.println("# cmd: missing on/off");
+            Serial.flush();
+            return true;
+        }
+        if (strcmp(arg, "on") == 0) {
+            setPromiscuousFilter();
+            esp_wifi_set_promiscuous_rx_cb(snifferCallback);
+            esp_wifi_set_promiscuous(true);
+            g_promisc_on = true;
+            Serial.println("# promisc=on");
+        } else if (strcmp(arg, "off") == 0) {
+            esp_wifi_set_promiscuous(false);
+            g_promisc_on = false;
+            Serial.println("# promisc=off");
+        } else {
+            Serial.println("# cmd: missing on/off");
+        }
+        Serial.flush();
+        return true;
+    }
+
     // Unknown command: echo the original token so the user sees what was
     // rejected. Re-print from `cmd` (already NUL-terminated by strtok).
     Serial.printf("# unknown cmd: %s\n", cmd);
@@ -264,6 +301,107 @@ bool isIgnored(const char* ssid) {
         }
     }
     return false;
+}
+
+// Sniffer callback for promiscuous-mode probe-request logging (issue #1).
+// Registered by the `!promisc on` command. Only management frames are
+// forwarded (the filter set in `setPromiscuousFilter()`), and we further
+// narrow to probe requests (frame type 0, subtype 4) here. Each matching
+// frame is emitted as a CSV row with frame_type="probe_req" and the
+// client's source MAC in src_mac. SSID is parsed from the tagged
+// parameters; a wildcard (null) probe yields an empty SSID.
+//
+// This runs in the Wi-Fi task context, so it must be fast and must not
+// block. csvEscape() heap-allocates and free() releases it immediately;
+// Serial.printf() is line-buffered by the Arduino core.
+void snifferCallback(void* buf, wifi_promiscuous_pkt_type_t type) {
+    if (type != WIFI_PKT_MGMT) {
+        return;
+    }
+    if (!g_promisc_on) {
+        return;
+    }
+
+    wifi_promiscuous_pkt_t* pkt = static_cast<wifi_promiscuous_pkt_t*>(buf);
+    wifi_pkt_rx_ctrl_t ctrl = pkt->rx_ctrl;
+    uint8_t* frame = pkt->payload;
+
+    // 802.11 management frame: type=0 (bits 3:2 of byte 0), subtype=4
+    // (bits 7:4 of byte 0) => probe request.
+    uint8_t frame_type    = (frame[0] >> 2) & 0x03;
+    uint8_t frame_subtype = (frame[0] >> 4) & 0x0F;
+    if (frame_type != 0 || frame_subtype != 4) {
+        return;
+    }
+
+    // Source MAC is address 2, bytes 10..15 of the management frame header.
+    char src_mac[18];
+    snprintf(src_mac, sizeof(src_mac), "%02x:%02x:%02x:%02x:%02x:%02x",
+             frame[10], frame[11], frame[12], frame[13], frame[14],
+             frame[15]);
+
+    int16_t  rssi    = ctrl.rssi;
+    uint8_t  channel = ctrl.channel;
+
+    // Extract the SSID from the tagged parameters, which start at byte 24
+    // of the management frame. Tag 0 is the SSID: 1 byte tag number,
+    // 1 byte length, then the SSID bytes. A length of 0 means a wildcard
+    // (broadcast) probe request with no specific SSID.
+    char ssid_buf[33] = {0};
+    const uint16_t payload_len = ctrl.sig_len;
+    // The fixed management header is 24 bytes; tagged params follow. Guard
+    // against short frames so we never read past the buffer.
+    if (payload_len >= 26) {
+        uint16_t pos = 24;
+        while (pos + 2 <= payload_len) {
+            uint8_t tag_num   = frame[pos];
+            uint8_t tag_len   = frame[pos + 1];
+            pos += 2;
+            if (tag_num == 0) {
+                // SSID tag. Cap at 32 bytes per the 802.11 spec.
+                uint8_t copy_len = tag_len;
+                if (copy_len > 32) {
+                    copy_len = 32;
+                }
+                if (pos + copy_len <= payload_len) {
+                    memcpy(ssid_buf, frame + pos, copy_len);
+                    ssid_buf[copy_len] = '\0';
+                }
+                break;
+            }
+            pos += tag_len;
+        }
+    }
+
+    const uint32_t ts_ms = millis();
+    const float    dist_m = rssiToDistance(rssi);
+
+    char* label_esc = csvEscape(g_spot_label);
+    char* ssid_esc  = csvEscape(ssid_buf);
+    char* mac_esc   = csvEscape(src_mac);
+
+    Serial.printf("%u,%s,%lu,%s,,%ld,%u,,%.2f,probe_req,%s\n",
+                  static_cast<unsigned>(g_spot_id),
+                  label_esc,
+                  static_cast<unsigned long>(ts_ms),
+                  ssid_esc,
+                  static_cast<long>(rssi),
+                  static_cast<unsigned>(channel),
+                  static_cast<double>(dist_m),
+                  mac_esc);
+    Serial.flush();
+
+    free(label_esc);
+    free(ssid_esc);
+    free(mac_esc);
+}
+
+// Install the promiscuous-mode filter so only management frames reach the
+// sniffer callback. Called once when enabling promiscuous mode.
+void setPromiscuousFilter() {
+    wifi_promiscuous_filter_t filter;
+    filter.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT;
+    esp_wifi_set_promiscuous_filter(&filter);
 }
 
 // Sample a non-empty serial line into g_spot_label. Returns true on update.
@@ -319,7 +457,7 @@ void printApRow(uint16_t spot_id, const char* spot_label, uint32_t ts_ms,
     char*         label_esc = csvEscape(spot_label);
     char*         ssid_esc  = csvEscape(ssid.c_str());
 
-    Serial.printf("%u,%s,%lu,%s,%s,%ld,%ld,%s,%.2f\n",
+    Serial.printf("%u,%s,%lu,%s,%s,%ld,%ld,%s,%.2f,ap,\n",
                   static_cast<unsigned>(spot_id),
                   label_esc,
                   static_cast<unsigned long>(ts_ms),
@@ -340,6 +478,15 @@ void logCurrentSpot() {
     const uint32_t scan_start = millis();
     esp_task_wdt_reset();
 
+    // Promiscuous mode and active scanning conflict on the ESP32 radio.
+    // If the host has enabled promiscuous sniffing, suspend it for the
+    // duration of WiFi.scanNetworks() and restore it afterwards so the
+    // user's intent survives the scan (issue #1).
+    const bool was_promisc = g_promisc_on;
+    if (was_promisc) {
+        esp_wifi_set_promiscuous(false);
+    }
+
     const int n = WiFi.scanNetworks(SCAN_ASYNC, SCAN_SHOW_HIDDEN,
                                    SCAN_PASSIVE,
                                    static_cast<int>(g_dwell_ms),
@@ -356,6 +503,9 @@ void logCurrentSpot() {
                       static_cast<unsigned long>(millis() - scan_start));
         free(label_esc);
         Serial.flush();
+        if (was_promisc) {
+            esp_wifi_set_promiscuous(true);
+        }
         ledOff();
         ++g_spot_id;
         esp_task_wdt_reset();
@@ -404,6 +554,9 @@ void logCurrentSpot() {
 
     Serial.flush();
 
+    if (was_promisc) {
+        esp_wifi_set_promiscuous(true);
+    }
     ledOff();
     ++g_spot_id;
     ledConfirmBlinks();
@@ -422,7 +575,7 @@ void setup() {
     Serial.printf("# fw_version=%s\n", FIRMWARE_VERSION);
     Serial.printf("# mac=%s\n", WiFi.macAddress().c_str());
     Serial.printf("# schema_version=%d\n", SCHEMA_VERSION);
-    Serial.println(F("# spot_id,spot_label,timestamp_ms,ssid,bssid,rssi,channel,auth_mode,est_distance_m"));
+    Serial.println(F("# spot_id,spot_label,timestamp_ms,ssid,bssid,rssi,channel,auth_mode,est_distance_m,frame_type,src_mac"));
     Serial.flush();
 
     pinMode(LED_PIN, OUTPUT);
