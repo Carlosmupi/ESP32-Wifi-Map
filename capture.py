@@ -136,6 +136,11 @@ def main() -> None:
                         help=f"Serial port (default {DEFAULT_PORT})")
     parser.add_argument("--baud", type=int, default=DEFAULT_BAUD,
                         help=f"Baud rate (default {DEFAULT_BAUD})")
+    parser.add_argument("--live", action="store_true",
+                        help="Serve a real-time radar dashboard over HTTP "
+                             "(issue #27).")
+    parser.add_argument("--web-port", type=int, default=8080,
+                        help="HTTP port for the --live dashboard (default 8080)")
     args = parser.parse_args()
 
     print(f"Opening {args.port} at {args.baud} baud...")
@@ -146,6 +151,16 @@ def main() -> None:
 
     print("Connected. Type labels into the monitor, press BOOT to log a spot.")
     print("Press Ctrl+C to stop.\n")
+
+    # Live radar dashboard (issue #27). Started after the serial
+    # connection is established so a port conflict is surfaced before
+    # the web server binds. Pure stdlib — no extra dependencies.
+    live_server = None
+    if args.live:
+        from wifiscan.live import LiveServer
+        live_server = LiveServer(port=args.web_port)
+        live_server.start()
+        print(f"[capture] live radar dashboard: {live_server.url}\n")
 
     header_seen = False
     fw_schema_version: int | None = None
@@ -174,13 +189,15 @@ def main() -> None:
                 if v is not None:
                     fw_schema_version = v
 
-            # Header validation.
+            # Header validation (non-gating: data rows are processed
+            # even if the board was already running and the header was
+            # missed).
             if not header_seen:
                 if line == HEADER_LINE:
                     print("[capture] header OK — est_distance_m present")
                     print(version_check_message(fw_schema_version))
                     header_seen = True
-                continue
+                    continue
 
             # Footer marks the end of one spot's rows. Flush to disk.
             if parse_footer(line) is not None:
@@ -200,6 +217,8 @@ def main() -> None:
             row = parse_data_row(line)
             if row is not None:
                 buffer.append(row)
+                if live_server is not None:
+                    live_server.broadcast(row)
 
     except KeyboardInterrupt:
         print("\n[capture] Ctrl+C — stopping.")
@@ -220,6 +239,10 @@ def main() -> None:
             ser.close()
         except Exception:
             pass
+
+        if live_server is not None:
+            live_server.stop()
+            print("[capture] live dashboard stopped.")
 
         if not header_seen:
             print("[capture] WARNING: never saw the firmware header. "
