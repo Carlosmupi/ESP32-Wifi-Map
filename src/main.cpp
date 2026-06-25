@@ -27,6 +27,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <math.h>
+#include <esp_task_wdt.h>
 
 namespace {
 
@@ -229,6 +230,7 @@ void printApRow(uint16_t spot_id, const char* spot_label, uint32_t ts_ms,
 void logCurrentSpot() {
     ledOn();
     const uint32_t scan_start = millis();
+    esp_task_wdt_reset();
 
     const int n = WiFi.scanNetworks(SCAN_ASYNC, SCAN_SHOW_HIDDEN,
                                    SCAN_PASSIVE,
@@ -246,6 +248,7 @@ void logCurrentSpot() {
         Serial.flush();
         ledOff();
         ++g_spot_id;
+        esp_task_wdt_reset();
         ledConfirmBlinks();
         return;
     }
@@ -256,6 +259,7 @@ void logCurrentSpot() {
     Serial.flush();
 
     WiFi.scanDelete();
+    esp_task_wdt_reset();
 
     Serial.printf("# spot=%u label=%s ap_count=%d scan_ms=%lu\n",
                   static_cast<unsigned>(spot_id),
@@ -267,6 +271,7 @@ void logCurrentSpot() {
     ledOff();
     ++g_spot_id;
     ledConfirmBlinks();
+    esp_task_wdt_reset();
 }
 
 }  // namespace
@@ -287,9 +292,12 @@ void setup() {
     pinMode(BUTTON_PIN, INPUT_PULLUP);
 
     // Station mode is required for scanNetworks().
-    WiFi.mode(WIFI_STA);
     WiFi.disconnect();
     delay(100);
+
+    // 10 s panic timeout — recovers the board if WiFi.scanNetworks() hangs.
+    esp_task_wdt_init(10, true);
+    esp_task_wdt_add(NULL);
 
     // Initial ack so the user knows the board is alive.
     ledAckBlink();
