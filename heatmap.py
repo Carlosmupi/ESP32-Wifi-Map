@@ -22,6 +22,9 @@ Dependencies:
 import argparse
 import sys
 from pathlib import Path
+# Canonical CSV schema (column list, filename sanitizer) lives in the
+# wifiscan package so heatmap.py and capture.py agree.
+from wifiscan.schema import EXPECTED_COLUMNS, safe_fieldname
 
 try:
     import pandas as pd
@@ -120,7 +123,7 @@ def main() -> None:
         raise SystemExit(f"CSV not found: {args.csv_path}")
 
     df = pd.read_csv(args.csv_path)
-    required = {"spot_id", "spot_label", "ssid", "rssi", "est_distance_m"}
+    required = set(EXPECTED_COLUMNS)
     missing = required - set(df.columns)
     if missing:
         raise SystemExit(f"CSV missing required columns: {sorted(missing)}")
@@ -171,9 +174,7 @@ def main() -> None:
 
     # One plot per unique SSID.
     for ssid in sorted(df["ssid"].unique()):
-        safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in ssid)
-        if not safe:
-            safe = "hidden"
+        safe = safe_fieldname(ssid)
         if coords is not None:
             out = out_dir / f"{basename}_{safe}_heatmap.png"
             plot_scatter_heatmap(df, ssid, out)

@@ -17,7 +17,6 @@ Dependencies:
 
 import argparse
 import csv
-import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -28,6 +27,15 @@ except ImportError as exc:
     raise SystemExit(
         "pyserial is required. Install with: pip install pyserial"
     ) from exc
+
+# Canonical CSV schema — column list, header string, row/footer parsers —
+# lives in the wifiscan package so capture.py and heatmap.py agree.
+from wifiscan.schema import (
+    EXPECTED_COLUMNS,
+    HEADER_LINE,
+    parse_data_row,
+    parse_footer,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -41,49 +49,17 @@ OUTPUT_DIR = Path(__file__).parent / "logs"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 
-# ---------------------------------------------------------------------------
-# Parsing
-# ---------------------------------------------------------------------------
-HEADER_RE = re.compile(
-    r"^#\s*spot_id,spot_label,timestamp_ms,ssid,bssid,rssi,channel,"
-    r"auth_mode,est_distance_m\s*$"
-)
-SPOT_FOOTER_RE = re.compile(r"^#\s*spot=(\d+)")
-
-
 def timestamped_path() -> Path:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     return OUTPUT_DIR / f"signal_map_{ts}.csv"
 
 
 def write_rows(path: Path, rows: list[dict]) -> None:
-    fieldnames = [
-        "spot_id", "spot_label", "timestamp_ms", "ssid", "bssid",
-        "rssi", "channel", "auth_mode", "est_distance_m",
-    ]
     with path.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=fieldnames)
+        writer = csv.DictWriter(fh, fieldnames=list(EXPECTED_COLUMNS))
         writer.writeheader()
         for row in rows:
             writer.writerow(row)
-
-
-def parse_row(line: str) -> dict | None:
-    """Parse a CSV data row produced by the firmware into a dict."""
-    parts = next(csv.reader([line]))
-    if len(parts) != 9:
-        return None
-    return {
-        "spot_id": parts[0],
-        "spot_label": parts[1],
-        "timestamp_ms": parts[2],
-        "ssid": parts[3],
-        "bssid": parts[4],
-        "rssi": parts[5],
-        "channel": parts[6],
-        "auth_mode": parts[7],
-        "est_distance_m": parts[8],
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -126,13 +102,13 @@ def main() -> None:
 
             # Header validation.
             if not header_seen:
-                if HEADER_RE.match(line):
+                if line == HEADER_LINE:
                     print("[capture] header OK — est_distance_m present")
                     header_seen = True
                 continue
 
             # Footer marks the end of one spot's rows. Flush to disk.
-            if SPOT_FOOTER_RE.match(line):
+            if parse_footer(line) is not None:
                 if buffer:
                     if current_path is None:
                         current_path = timestamped_path()
@@ -145,7 +121,7 @@ def main() -> None:
                 continue
 
             # Regular CSV data row.
-            row = parse_row(line)
+            row = parse_data_row(line)
             if row is not None:
                 buffer.append(row)
 
