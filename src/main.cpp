@@ -90,6 +90,16 @@ bool        g_promisc_on      = false;
 // extension: a `!scan` triggered while the radio is already busy is
 // silently dropped, and the monitor loop skips its tick).
 bool        g_scan_in_flight  = false;
+// Monitor mode (Phase 2 of the radio-monitor design). When `g_monitor_on`
+// is true, loop() periodically calls logCurrentSpot() on the cadence
+// given by g_monitor_interval_ms (gated by monitorTick from
+// wifi_scan_util). The label is overwritten to "monitor" so monitor-
+// mode rows are visually distinct in the captured CSV.
+bool        g_monitor_on          = false;
+uint32_t    g_monitor_interval_ms = 5000;
+uint32_t    g_last_monitor_scan_ms = 0;
+constexpr uint32_t MONITOR_MIN_INTERVAL_MS     = 1000;
+constexpr uint32_t MONITOR_DEFAULT_INTERVAL_MS = 5000;
 
 
 inline void ledOn()  { digitalWrite(LED_PIN, LED_ACTIVE_LOW ? LOW  : HIGH); }
@@ -277,6 +287,42 @@ bool handleCommand(char* line) {
         } else {
             Serial.println(F("# scan: triggered"));
             logCurrentSpot();
+        }
+        Serial.flush();
+        return true;
+    }
+
+    if (strcmp(cmd, "!monitor") == 0) {
+        char* sub = strtok(nullptr, " \t");
+        if (!sub) {
+            Serial.println(F("# cmd: missing on/off"));
+            Serial.flush();
+            return true;
+        }
+        if (strcmp(sub, "on") == 0) {
+            char* ms_arg = strtok(nullptr, " \t");
+            uint32_t ms = MONITOR_DEFAULT_INTERVAL_MS;
+            if (ms_arg) {
+                const long v = strtol(ms_arg, nullptr, 10);
+                if (v < static_cast<long>(MONITOR_MIN_INTERVAL_MS)) {
+                    Serial.println(F("# monitor: out of range (min 1000)"));
+                    Serial.flush();
+                    return true;
+                }
+                ms = static_cast<uint32_t>(v);
+            }
+            g_monitor_interval_ms  = ms;
+            g_last_monitor_scan_ms = millis();
+            g_monitor_on           = true;
+            // Synthetic label so the CSV clearly identifies monitor rows.
+            copyLabel(g_spot_label, sizeof(g_spot_label), "monitor");
+            Serial.printf("# monitor=on interval_ms=%u\n",
+                          static_cast<unsigned>(ms));
+        } else if (strcmp(sub, "off") == 0) {
+            g_monitor_on = false;
+            Serial.println(F("# monitor=off"));
+        } else {
+            Serial.println(F("# cmd: missing on/off"));
         }
         Serial.flush();
         return true;
