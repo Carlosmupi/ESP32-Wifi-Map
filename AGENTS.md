@@ -76,8 +76,9 @@ Footer comment that marks a spot boundary:
 * The schema module exports `SCHEMA_VERSION` (currently 2); bumping it requires coordinated changes in `wifiscan/schema.py`, `src/main.cpp`, `firmware_header.txt`, and `capture.py` (issue #16).
 * The PlatformIO `native` test env covers pure firmware functions only (`wifi_scan_util.{h,cpp}`); non-pure code (`WiFi`, `Serial`, `debounced_button`, `io_abstractions`) is excluded from native tests (issue #9, `platformio.ini` `[env:native]`).
 * CSV injection mitigation: `_safe_field()` in `wifiscan/schema.py` prefixes `'` to cells starting with `=`, `+`, `-`, `@` — applied only to free-text columns, not numeric ones (RSSI is always negative) (issue #18).
-* Runtime commands (`!dwell`, `!channel`, `!ignore`, `!promisc`) are parsed in `handleCommand()` in `src/main.cpp` — the ignore list is in-memory and lost on reboot (issues #22, #23, #1).
+* Runtime commands (`!dwell`, `!channel`, `!ignore`, `!scan`, `!monitor`, `!promisc`) are parsed in `handleCommand()` in `src/main.cpp` — the ignore list, monitor mode, and `g_scan_in_flight` flag are in-memory and lost on reboot (issues #22, #23, #1, #31).
 * Promiscuous mode (`!promisc on`) coexists with active scan by temporarily disabling promisc during `WiFi.scanNetworks()` (issue #1, `src/main.cpp` `logCurrentSpot()`).
+* `!monitor` and `!promisc on` cannot run simultaneously: the radio cannot be in promiscuous mode while performing an active scan. The first to claim the radio wins. To switch, turn the other off first. Tracked in issue #31.
 
 ## How to make a change
 
