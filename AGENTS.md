@@ -67,6 +67,20 @@ Footer comment that marks a spot boundary:
 ## Pitfalls
 
 * Don't change `BUTTON_PIN` away from 0 without updating the README.
-* Don't change the CSV header without updating `capture.py`'s `HEADER_RE`.
+* Don't change the CSV header without updating the centralized schema in `wifiscan/schema.py` — `capture.py` reads `HEADER_LINE` from there, not a local `HEADER_RE` regex.
 * RSSI→distance is capped at 10 m and is a rough path-loss estimate — not ground truth.
 * The ESP32 can only scan one channel at a time; full-band scans take ~4 s at 300 ms/channel.
+* `spot_label` must be CSV-escaped in all four serial output sites — the firmware uses `csvEscape()` from `wifi_scan_util.h` (issue #4, `src/main.cpp`).
+* `Serial.readStringUntil` was replaced with a bounded `readBytesUntil` read; pasting large inputs is silently dropped rather than OOM-crashing the board (issue #8, `src/main.cpp` `readSerialLabel()`).
+* The CSV schema lives in `wifiscan/schema.py` (Python) and `firmware_header.txt` (checked in); both must be kept in sync via `tools/check_schema.py` (issues #6, #13).
+* The schema module exports `SCHEMA_VERSION` (currently 2); bumping it requires coordinated changes in `wifiscan/schema.py`, `src/main.cpp`, `firmware_header.txt`, and `capture.py` (issue #16).
+* The PlatformIO `native` test env covers pure firmware functions only (`wifi_scan_util.{h,cpp}`); non-pure code (`WiFi`, `Serial`, `debounced_button`, `io_abstractions`) is excluded from native tests (issue #9, `platformio.ini` `[env:native]`).
+* CSV injection mitigation: `_safe_field()` in `wifiscan/schema.py` prefixes `'` to cells starting with `=`, `+`, `-`, `@` — applied only to free-text columns, not numeric ones (RSSI is always negative) (issue #18).
+* Runtime commands (`!dwell`, `!channel`, `!ignore`, `!promisc`) are parsed in `handleCommand()` in `src/main.cpp` — the ignore list is in-memory and lost on reboot (issues #22, #23, #1).
+* Promiscuous mode (`!promisc on`) coexists with active scan by temporarily disabling promisc during `WiFi.scanNetworks()` (issue #1, `src/main.cpp` `logCurrentSpot()`).
+
+## How to make a change
+
+1. **CSV schema changes**: Edit `EXPECTED_COLUMNS` in `wifiscan/schema.py`, then bump `SCHEMA_VERSION` (both there and in `src/main.cpp`). Run `python tools/check_schema.py` to verify sync. Regenerate `firmware_header.txt` with `python tools/sync_firmware_header.py`.
+2. **Run tests before committing**: `pio test -e native` (firmware pure functions), `python -m pytest tests/ -q` (Python: capture, heatmap, merge, schema).
+3. **CI**: GitHub Actions runs both test suites on every push/PR to `main` (see `.github/workflows/ci.yml`).
