@@ -74,30 +74,6 @@ def make_df(rows: list[dict], extra: dict | None = None) -> pd.DataFrame:
     return df
 
 
-def summarise(df: pd.DataFrame) -> pd.DataFrame:
-    """Mirror the per-AP summary aggregation in heatmap.main().
-
-    The function is inlined in heatmap.py; this helper makes the contract
-    explicit and independently testable.  Tie-breaking is the documented
-    pandas ``idxmin`` behavior: the first-encountered minimum wins.
-    """
-    return (
-        df.groupby("ssid")
-        .agg(
-            spots=("spot_label", "nunique"),
-            strongest_rssi=("rssi", "max"),
-            closest_m=("est_distance_m", "min"),
-            closest_spot=(
-                "spot_label",
-                lambda s: s.loc[
-                    df.loc[s.index, "est_distance_m"].idxmin()
-                ],
-            ),
-        )
-        .sort_values("strongest_rssi", ascending=False)
-    )
-
-
 # ---------------------------------------------------------------------------
 # safe_fieldname
 # ---------------------------------------------------------------------------
@@ -155,7 +131,7 @@ class TestSummary:
             make_row(ssid="B", spot_label="s1", rssi=-60, est_distance_m=2.0),
             make_row(ssid="B", spot_label="s2", rssi=-65, est_distance_m=4.0),
         ])
-        s = summarise(df)
+        s = heatmap.summarise(df)
         assert s.loc["A", "strongest_rssi"] == -50
         assert s.loc["B", "strongest_rssi"] == -60
 
@@ -165,7 +141,7 @@ class TestSummary:
             make_row(ssid="A", spot_label="near", rssi=-50, est_distance_m=1.0),
             make_row(ssid="A", spot_label="mid", rssi=-50, est_distance_m=4.0),
         ])
-        s = summarise(df)
+        s = heatmap.summarise(df)
         assert s.loc["A", "closest_spot"] == "near"
         assert s.loc["A", "closest_m"] == 1.0
 
@@ -176,7 +152,7 @@ class TestSummary:
             make_row(ssid="A", spot_label="s2", rssi=-55, est_distance_m=3.0),
             make_row(ssid="B", spot_label="s1", rssi=-50, est_distance_m=1.0),
         ])
-        s = summarise(df)
+        s = heatmap.summarise(df)
         # nunique() counts distinct spot_labels per AP.
         assert s.loc["A", "spots"] == 2
         assert s.loc["B", "spots"] == 1
@@ -188,8 +164,8 @@ class TestSummary:
             make_row(ssid="A", spot_label="first", rssi=-50, est_distance_m=1.0),
             make_row(ssid="A", spot_label="second", rssi=-50, est_distance_m=1.0),
         ])
-        first_run = summarise(df).loc["A", "closest_spot"]
-        second_run = summarise(df).loc["A", "closest_spot"]
+        first_run = heatmap.summarise(df).loc["A", "closest_spot"]
+        second_run = heatmap.summarise(df).loc["A", "closest_spot"]
         assert first_run == "first"
         assert first_run == second_run
 
@@ -199,7 +175,7 @@ class TestSummary:
             make_row(ssid="loud", spot_label="s1", rssi=-40, est_distance_m=5.0),
             make_row(ssid="mid", spot_label="s1", rssi=-60, est_distance_m=5.0),
         ])
-        s = summarise(df)
+        s = heatmap.summarise(df)
         # strongest_rssi sorted descending — loud first.
         assert list(s.index) == ["loud", "mid", "weak"]
 
@@ -224,50 +200,36 @@ class TestCoerceNumeric:
         assert bad_rssi == -100
         assert any("bad" in w and "rssi" in w for w in warnings)
 
-    def test_non_numeric_coord_rejected_loudly(self, tmp_path, capsys):
-        # Mirror the validation in heatmap.main(): non-numeric x/y is a hard
-        # error so a silent merge cannot scatter a row at (0, 0).
+    def test_non_numeric_coord_rejected_loudly(self, tmp_path):
+        # Drive the real heatmap.load_and_validate_coords() — a non-numeric
+        # x/y is a hard error so a silent merge cannot scatter a row at (0,0).
         coords_path = tmp_path / "bad_coords.csv"
         coords_path.write_text(
             "spot_label,x,y\ns1,1.0,2.0\ns2,not_a_number,3.0\n",
             encoding="utf-8",
         )
-        import pandas as _pd
-        coords = _pd.read_csv(coords_path)
-        x_num = _pd.to_numeric(coords["x"], errors="coerce")
-        y_num = _pd.to_numeric(coords["y"], errors="coerce")
-        bad = (x_num.isna() & coords["x"].notna()) | (
-            y_num.isna() & coords["y"].notna()
-        )
-        assert bad.any()
         with pytest.raises(SystemExit) as exc:
-            raise SystemExit(
-                f"coords file contains non-numeric x/y values; "
-                f"offending row(s): spot_label='s2' x='not_a_number' y='3.0'"
-            )
+            heatmap.load_and_validate_coords(coords_path)
         assert "non-numeric" in str(exc.value)
+        assert "s2" in str(exc.value)
 
     def test_missing_coord_dropped_with_warning(self, capsys):
-        # When the merge leaves x or y as NaN, those rows are dropped and a
-        # warning is emitted for the affected spot.
+        # Drive the real heatmap.merge_coords() — when the merge leaves x or y
+        # as NaN, those rows are dropped and a warning is emitted.
         df = make_df(
             [
                 make_row(ssid="A", spot_label="known", rssi=-50, est_distance_m=1.0),
                 make_row(ssid="A", spot_label="orphan", rssi=-60, est_distance_m=2.0),
             ],
-            extra={"x": [1.0, None], "y": [2.0, None]},
         )
-        before = len(df)
-        nan_labels = sorted(
-            df.loc[df["x"].isna() | df["y"].isna(), "spot_label"].unique()
-        )
-        assert nan_labels == ["orphan"]
-        for label in nan_labels:
-            print(f"[heatmap] WARNING: no coords for spot '{label}'; "
-                  "dropped from scatter plot")
-        cleaned = df.dropna(subset=["x", "y"])
-        assert len(cleaned) == before - 1
-        assert "orphan" not in cleaned["spot_label"].tolist()
+        coords = pd.DataFrame({
+            "spot_label": ["known"],
+            "x": [1.0],
+            "y": [2.0],
+        })
+        merged = heatmap.merge_coords(df, coords)
+        assert "orphan" not in merged["spot_label"].tolist()
+        assert "known" in merged["spot_label"].tolist()
         captured = capsys.readouterr()
         assert "orphan" in captured.out
         assert "WARNING" in captured.out
@@ -278,8 +240,8 @@ class TestCoerceNumeric:
 # ---------------------------------------------------------------------------
 class TestRequiredColumns:
     def test_csv_missing_required_column_exits_nonzero(self, tmp_path):
-        import pandas as _pd
-        # Drop 'rssi' to simulate a malformed capture file.
+        # Drive the real heatmap.validate_required_columns() — a DataFrame
+        # missing a required column must raise SystemExit.
         bad_path = tmp_path / "missing_col.csv"
         rows = [
             {k: i for k, i in zip(EXPECTED_COLUMNS, row)}
@@ -297,15 +259,12 @@ class TestRequiredColumns:
             for r in rows:
                 writer.writerow({k: r[k] for k in fieldnames})
 
+        import pandas as _pd
         df = _pd.read_csv(bad_path)
-        required = set(EXPECTED_COLUMNS)
-        missing = required - set(df.columns)
-        assert missing == {"rssi"}
         with pytest.raises(SystemExit) as exc:
-            raise SystemExit(
-                f"CSV missing required columns: {sorted(missing)}"
-            )
-        assert exc.value.code == 1 or "missing required columns" in str(exc.value)
+            heatmap.validate_required_columns(df)
+        assert "rssi" in str(exc.value)
+        assert "missing required columns" in str(exc.value)
 
 
 # ---------------------------------------------------------------------------
@@ -314,12 +273,12 @@ class TestRequiredColumns:
 class TestHiddenSSID:
     def test_empty_string_replaced_with_hidden(self):
         df = pd.DataFrame({"ssid": ["Net", "", "Other"]})
-        df["ssid"] = df["ssid"].fillna("hidden").replace("", "hidden")
+        heatmap.normalize_ssids(df)
         assert df["ssid"].tolist() == ["Net", "hidden", "Other"]
 
     def test_nan_replaced_with_hidden(self):
         df = pd.DataFrame({"ssid": ["Net", None, "Other"]})
-        df["ssid"] = df["ssid"].fillna("hidden").replace("", "hidden")
+        heatmap.normalize_ssids(df)
         assert df["ssid"].tolist() == ["Net", "hidden", "Other"]
 
 

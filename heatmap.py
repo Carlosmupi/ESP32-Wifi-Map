@@ -86,6 +86,88 @@ def _coerce_numeric(df: pd.DataFrame, ssid: str) -> tuple[pd.DataFrame, list[str
     return sub, warnings
 
 
+def summarise(df: pd.DataFrame) -> pd.DataFrame:
+    """Per-AP summary aggregation: spots seen, strongest RSSI, closest spot.
+
+    Tie-breaking follows pandas ``idxmin`` behaviour: the first-encountered
+    minimum wins.  Sorted by strongest RSSI descending.
+    """
+    return (
+        df.groupby("ssid")
+        .agg(
+            spots=("spot_label", "nunique"),
+            strongest_rssi=("rssi", "max"),
+            closest_m=("est_distance_m", "min"),
+            closest_spot=("spot_label",
+                          lambda s: s.loc[df.loc[s.index,
+                                                 "est_distance_m"].idxmin()]),
+        )
+        .sort_values("strongest_rssi", ascending=False)
+    )
+
+
+def validate_required_columns(df: pd.DataFrame) -> None:
+    """Raise SystemExit if any expected column is missing from df."""
+    required = set(EXPECTED_COLUMNS)
+    missing = required - set(df.columns)
+    if missing:
+        raise SystemExit(f"CSV missing required columns: {sorted(missing)}")
+
+
+def normalize_ssids(df: pd.DataFrame) -> None:
+    """Replace empty/NaN SSIDs with 'hidden' in-place."""
+    df["ssid"] = df["ssid"].fillna("hidden").replace("", "hidden")
+
+
+def load_and_validate_coords(coords_path: Path) -> pd.DataFrame:
+    """Load coords.csv, validate columns and numeric x/y.
+
+    Raises SystemExit if the file is missing, lacks required columns, or
+    contains non-numeric x/y values (a hard error to prevent silent
+    scatter at (0, 0)).
+    """
+    if not coords_path.is_file():
+        raise SystemExit(f"coords file not found: {coords_path}")
+    coords = pd.read_csv(coords_path)
+    coord_cols = {"spot_label", "x", "y"}
+    if not coord_cols.issubset(coords.columns):
+        raise SystemExit(
+            f"coords file must contain columns {sorted(coord_cols)}")
+    x_num = pd.to_numeric(coords["x"], errors="coerce")
+    y_num = pd.to_numeric(coords["y"], errors="coerce")
+    bad = (x_num.isna() & coords["x"].notna()) | (
+        y_num.isna() & coords["y"].notna())
+    if bad.any():
+        offenders = []
+        for idx in coords.index[bad]:
+            offenders.append(
+                f"spot_label={coords.at[idx, 'spot_label']!r} "
+                f"x={coords.at[idx, 'x']!r} y={coords.at[idx, 'y']!r}"
+            )
+        raise SystemExit(
+            "coords file contains non-numeric x/y values; offending "
+            f"row(s): {'; '.join(offenders)}"
+        )
+    coords["x"] = x_num.astype(float)
+    coords["y"] = y_num.astype(float)
+    return coords
+
+
+def merge_coords(df: pd.DataFrame, coords: pd.DataFrame) -> pd.DataFrame:
+    """Left-merge coords onto df, dropping rows without coords with a warning."""
+    df = df.merge(coords[["spot_label", "x", "y"]], on="spot_label",
+                  how="left")
+    if df[["x", "y"]].isna().any().any():
+        nan_labels = sorted(
+            df.loc[df["x"].isna() | df["y"].isna(), "spot_label"]
+            .unique())
+        for label in nan_labels:
+            print(f"[heatmap] WARNING: no coords for spot '{label}'; "
+                  "dropped from scatter plot")
+        df = df.dropna(subset=["x", "y"])
+    return df
+
+
 def plot_scatter_heatmap(df: pd.DataFrame, ssid: str, out: Path) -> None:
     sub, warnings = _coerce_numeric(df, ssid)
     for w in warnings:
@@ -159,52 +241,14 @@ def main() -> None:
         raise SystemExit(f"CSV not found: {args.csv_path}")
 
     df = pd.read_csv(args.csv_path)
-    required = set(EXPECTED_COLUMNS)
-    missing = required - set(df.columns)
-    if missing:
-        raise SystemExit(f"CSV missing required columns: {sorted(missing)}")
-    # Hidden networks can arrive with an empty SSID field.
-    df["ssid"] = df["ssid"].fillna("hidden").replace("", "hidden")
+    validate_required_columns(df)
+    normalize_ssids(df)
 
-    coords = None
+    has_coords = False
     if args.coords is not None:
-        if not args.coords.is_file():
-            raise SystemExit(f"coords file not found: {args.coords}")
-        coords = pd.read_csv(args.coords)
-        coord_cols = {"spot_label", "x", "y"}
-        if not coord_cols.issubset(coords.columns):
-            raise SystemExit(
-                f"coords file must contain columns {sorted(coord_cols)}")
-        # Validate x/y are numeric. Non-numeric values are a hard error:
-        # failing here prevents the silent merge that would scatter the row
-        # at (0, 0) or drop it without warning.
-        x_num = pd.to_numeric(coords["x"], errors="coerce")
-        y_num = pd.to_numeric(coords["y"], errors="coerce")
-        bad = (x_num.isna() & coords["x"].notna()) | (
-            y_num.isna() & coords["y"].notna())
-        if bad.any():
-            offenders = []
-            for idx in coords.index[bad]:
-                offenders.append(
-                    f"spot_label={coords.at[idx, 'spot_label']!r} "
-                    f"x={coords.at[idx, 'x']!r} y={coords.at[idx, 'y']!r}"
-                )
-            raise SystemExit(
-                "coords file contains non-numeric x/y values; offending "
-                f"row(s): {'; '.join(offenders)}"
-            )
-        coords["x"] = x_num.astype(float)
-        coords["y"] = y_num.astype(float)
-        df = df.merge(coords[["spot_label", "x", "y"]], on="spot_label",
-                      how="left")
-        if df[["x", "y"]].isna().any().any():
-            nan_labels = sorted(
-                df.loc[df["x"].isna() | df["y"].isna(), "spot_label"]
-                .unique())
-            for label in nan_labels:
-                print(f"[heatmap] WARNING: no coords for spot '{label}'; "
-                      "dropped from scatter plot")
-            df = df.dropna(subset=["x", "y"])
+        coords = load_and_validate_coords(args.coords)
+        df = merge_coords(df, coords)
+        has_coords = True
 
     out_dir = args.csv_path.parent
     basename = args.csv_path.stem
@@ -214,25 +258,14 @@ def main() -> None:
           f"{df['ssid'].nunique()} AP(s)")
 
     # Per-SSID summary.
-    summary = (
-        df.groupby("ssid")
-        .agg(
-            spots=("spot_label", "nunique"),
-            strongest_rssi=("rssi", "max"),
-            closest_m=("est_distance_m", "min"),
-            closest_spot=("spot_label",
-                          lambda s: s.loc[df.loc[s.index,
-                                                 "est_distance_m"].idxmin()]),
-        )
-        .sort_values("strongest_rssi", ascending=False)
-    )
+    summary = summarise(df)
     print("\n[heatmap] per-AP summary:")
     print(summary.to_string())
 
     # One plot per unique SSID.
     for ssid in sorted(df["ssid"].unique()):
         safe = safe_fieldname(ssid)
-        if coords is not None:
+        if has_coords:
             out = out_dir / f"{basename}_{safe}_heatmap.png"
             plot_scatter_heatmap(df, ssid, out)
         else:
