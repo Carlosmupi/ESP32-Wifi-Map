@@ -34,3 +34,36 @@ float rssiToDistance(int32_t rssi_dbm);
 // Arduino-String behavior of treating `length()` as the upper bound).
 // dest_size must be > 0; src may be NULL (no-op).
 void copyLabel(char* dest, size_t dest_size, const char* src);
+
+// Tiny testable seams so firmware code that depends on time or a digital
+// input can be unit-tested without dragging in the Arduino framework or a
+// connected board. The header stays free of <Arduino.h>: only the
+// declarations live here; the Arduino-coupled adapter bodies are in
+// src/io_abstractions.cpp.
+class Clock {
+public:
+    virtual uint32_t now_ms() = 0;
+    virtual ~Clock() = default;
+};
+
+class Pin {
+public:
+    virtual int read() = 0;
+    virtual ~Pin() = default;
+};
+
+// Arduino adapters. Declarations are framework-free so anything that only
+// needs the type can include this header without pulling in <Arduino.h>.
+// Bodies live in src/io_abstractions.cpp.
+class ArduinoClock : public Clock {
+public:
+    uint32_t now_ms() override;
+};
+
+class ArduinoPin : public Pin {
+public:
+    explicit ArduinoPin(uint8_t pin);
+    int read() override;
+private:
+    uint8_t pin_;
+};
