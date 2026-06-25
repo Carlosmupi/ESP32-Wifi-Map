@@ -22,37 +22,48 @@ No external components required.
 
 ## CSV Format
 
-Header (printed once at boot):
+Boot banner (printed once at startup):
 
 ```csv
 # Wi-Fi Scanner with Signal Map
 # Freenove ESP32 WROVER | CH340 on COM10 @ 115200
-# spot_id,spot_label,timestamp_ms,ssid,bssid,rssi,channel,auth_mode,est_distance_m
+# fw_version=0.2.0
+# mac=AA:BB:CC:DD:EE:FF
+# schema_version=2
+# spot_id,spot_label,timestamp_ms,ssid,bssid,rssi,channel,auth_mode,est_distance_m,frame_type,src_mac
 ```
 
 Data rows (one per visible AP at each spot):
 
 ```csv
-0,kitchen,12345,HomeNet,AA:BB:CC:DD:EE:FF,-42,6,WPA2_PSK,1.58
-0,kitchen,12346,Neighbor,11:22:33:44:55:66,-67,1,WPA2_PSK,5.92
-1,bedroom,12400,HomeNet,AA:BB:CC:DD:EE:FF,-55,6,WPA2_PSK,3.16
+0,kitchen,12345,HomeNet,AA:BB:CC:DD:EE:FF,-42,6,WPA2_PSK,1.58,ap,
+0,kitchen,12346,Neighbor,11:22:33:44:55:66,-67,1,WPA2_PSK,5.92,ap,
+1,bedroom,12400,HomeNet,AA:BB:CC:DD:EE:FF,-55,6,WPA2_PSK,3.16,ap,
 # spot=0 label=kitchen ap_count=2 scan_ms=1820
 # spot=1 label=bedroom ap_count=1 scan_ms=1750
+```
+
+With promiscuous mode on, probe-request rows are interleaved:
+
+```csv
+0,kitchen,34000,,00:11:22:33:44:55,-71,6,,,3.16,probe_req,aa:bb:cc:dd:ee:ff
 ```
 
 | Column | Meaning |
 | --- | --- |
 | `spot_id` | Auto-increment, starts at 0, incremented once per successful scan. |
 | `spot_label` | Free-text label set via USB serial (max 31 chars). |
-| `timestamp_ms` | `millis()` at scan completion. |
-| `ssid` | Network name (CSV-escaped if it contains `,` or `"`). |
-| `bssid` | MAC address, uppercase hex with colons. |
+| `timestamp_ms` | `millis()` at scan completion (AP rows) or frame reception (probe rows). |
+| `ssid` | Network name. CSV-escaped; cells starting with `=`, `+`, `-`, `@` are prefixed with `'` to prevent spreadsheet formula injection. |
+| `bssid` | MAC address, uppercase hex with colons. Empty for probe-request rows. |
 | `rssi` | Signal strength in dBm (negative; less negative = stronger). |
-| `channel` | 2.4 GHz channel (1–13). |
-| `auth_mode` | One of `OPEN`, `WEP`, `WPA_PSK`, `WPA2_PSK`, `WPA_WPA2_PSK`, `WPA2_ENT`, `WPA3_PSK`, `WPA2_WPA3_PSK`, `WAPI_PSK`, `WPA3_ENT_192`, `UNKNOWN`. |
+| `channel` | 2.4 GHz channel (1-13). |
+| `auth_mode` | One of `OPEN`, `WEP`, `WPA_PSK`, `WPA2_PSK`, `WPA_WPA2_PSK`, `WPA2_ENT`, `WPA3_PSK`, `WPA2_WPA3_PSK`, `WAPI_PSK`, `WPA3_ENT_192`, `UNKNOWN`. Empty for probe-request rows. |
 | `est_distance_m` | `exp((-rssi - 45) / 20)`, capped at 10.00 m, two decimals. |
+| `frame_type` | `ap` for access-point scan rows, `probe_req` for promiscuous-mode probe-request captures. |
+| `src_mac` | Source MAC of the probing client (probe-request rows only; empty for AP rows). |
 
-The lines starting with `#` are comments used by `capture.py` to detect spot boundaries.
+Lines starting with `#` are comments used by `capture.py` to detect the header, schema version, and spot boundaries.
 
 ## Build, Upload, and Monitor
 
@@ -61,6 +72,8 @@ pio run
 pio run --target upload
 pio device monitor --port COM10 --baud 115200
 ```
+
+Replace `COM10` with your board's port (e.g., `/dev/ttyUSB0` on Linux).
 
 ## Workflow
 
@@ -73,6 +86,21 @@ pio device monitor --port COM10 --baud 115200
 7. Stop the monitor and run `capture.py` to dump the data to disk (next section).
 
 To capture and plot in one session, run `capture.py` first (it owns the serial port), then press BOOT while it is running.
+
+## Runtime Commands
+
+Type any of these in the serial monitor (or send them via `capture.py`) alongside spot labels:
+
+| Command | Effect |
+| --- | --- |
+| `!dwell <ms>` | Set per-channel scan dwell (50-2000 ms; default 300). |
+| `!channel <0\|1-14>` | Set scan channel (0 = all; default 0). |
+| `!ignore <ssid>` | Add an SSID to the runtime ignore list (filtered from scan output; in-memory, lost on reboot). |
+| `!unignore <ssid>` | Remove an SSID from the ignore list. |
+| `!ignorelist` | Print the current ignore list. |
+| `!promisc on` / `!promisc off` | Enable/disable promiscuous-mode probe-request logging. |
+
+Unknown `!` commands echo `# unknown cmd`.
 
 ## Python Tools
 
@@ -100,6 +128,13 @@ python heatmap.py logs/signal_map_YYYYMMDD_HHMMSS.csv
 
 # With coordinates: 2-D scatter heatmap (annotated with spot label + est_distance_m).
 python heatmap.py logs/signal_map_YYYYMMDD_HHMMSS.csv --coords coords.csv
+
+# Filter to specific SSIDs only:
+python heatmap.py logs/signal_map_YYYYMMDD_HHMMSS.csv --ssid HomeNet --ssid Neighbor
+
+# Single combined figure with a grid of subplots (up to 9 SSIDs by default):
+python heatmap.py logs/signal_map_YYYYMMDD_HHMMSS.csv --combined
+python heatmap.py logs/signal_map_YYYYMMDD_HHMMSS.csv --combined --combined-max 16
 ```
 
 `coords.csv` schema:
@@ -111,15 +146,22 @@ bedroom,5,0
 livingroom,2,3
 ```
 
-PNG files are written to the same `logs/` directory: `<basename>_<SSID>_heatmap.png` (with `--coords`) or `<basename>_<SSID>_bars.png` (without).
+PNG files are written next to the input CSV: `<basename>_<SSID>_heatmap.png` (with `--coords`) or `<basename>_<SSID>_bars.png` (without). With `--combined`, a single `<basename>_combined.png` is written instead.
+
+### Merging multiple capture sessions
+
+```bash
+python -m wifiscan.merge logs/signal_map_20260625_100000.csv logs/signal_map_20260625_140000.csv
+# Custom output path:
+python -m wifiscan.merge logs/a.csv logs/b.csv --output logs/merged.csv
+# Deduplicate identical (spot_label, bssid, channel) triplets by median RSSI:
+python -m wifiscan.merge logs/a.csv logs/b.csv --dedup median
+```
+
+The merged CSV has globally-unique `spot_id` values (offset per input) and can be fed directly into `heatmap.py`.
 
 ## Notes
 
-* `est_distance_m` is a rough estimate based on a free-space path-loss model with a reference of `-45 dBm` at 1 m. Real-world signal propagation varies with walls, reflections, and antenna orientation — use it for relative comparison between spots, not as ground truth.
-* The ESP32 can only listen on one channel at a time; full-band scans take roughly `13 × SCAN_MAX_MS_PER_CHAN` (≈ 4 s at the default 300 ms/channel).
-* This project uses active `WiFi.scanNetworks()` only — it enumerates APs but not client stations. Promiscuous-mode capture (which would also log nearby devices' probe traffic) is a known future extension; see the plan's "Promiscuous mode" note.
-
-## Related Kit Examples
-
-* `C/Sketches/Sketch_02.1_ButtonAndLed/` — button + LED pattern.
-* `C/Sketches/Sketch_24.1_WiFi_Station/` — basic Wi-Fi API usage.
+* `est_distance_m` is a rough estimate based on a free-space path-loss model with a reference of `-45 dBm` at 1 m. Real-world signal propagation varies with walls, reflections, and antenna orientation -- use it for relative comparison between spots, not as ground truth.
+* The ESP32 can only listen on one channel at a time; full-band scans take roughly `13 x dwell_ms` (about 4 s at the default 300 ms/channel). Use `!dwell` to trade accuracy for speed.
+* Promiscuous-mode probe-request logging (`!promisc on`) captures nearby client devices' probe frames. It is automatically suspended during active scans and resumes afterward. Probe rows have `frame_type=probe_req` and a `src_mac` field.
