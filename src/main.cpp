@@ -24,6 +24,8 @@
  *   - three rapid blinks after a successful scan
  */
 
+#include "wifi_scan_util.h"
+
 #include <Arduino.h>
 #include <WiFi.h>
 #include <math.h>
@@ -48,14 +50,6 @@ constexpr bool     SCAN_PASSIVE         = false;
 constexpr uint16_t SCAN_MAX_MS_PER_CHAN = 300;
 constexpr uint8_t  SCAN_CHANNEL         = 0;  // 0 = scan every 2.4 GHz channel.
 
-// RSSI -> rough distance parameters (path-loss formula used by
-// Wifi-Radar-Scanner-for-ESP32). Distance is capped so a very weak RSSI
-// never produces a misleadingly large value.
-constexpr int16_t  RSSI_REFERENCE_DBM   = -45;
-constexpr float    DISTANCE_CAP_M       = 10.0f;
-constexpr float    DISTANCE_SCALE       = 20.0f;
-
-// Spot label and id state.
 char        g_spot_label[SPOT_LABEL_MAX_LEN + 1] = "default";
 uint16_t    g_spot_id                             = 0;
 
@@ -85,73 +79,6 @@ inline void ledConfirmBlinks() {
     }
 }
 
-// Map Arduino-ESP32 wifi_auth_mode_t to a short stable token.
-const char* authModeString(uint8_t auth) {
-    switch (static_cast<wifi_auth_mode_t>(auth)) {
-        case WIFI_AUTH_OPEN:             return "OPEN";
-        case WIFI_AUTH_WEP:              return "WEP";
-        case WIFI_AUTH_WPA_PSK:          return "WPA_PSK";
-        case WIFI_AUTH_WPA2_PSK:         return "WPA2_PSK";
-        case WIFI_AUTH_WPA_WPA2_PSK:     return "WPA_WPA2_PSK";
-        case WIFI_AUTH_WPA2_ENTERPRISE:  return "WPA2_ENT";
-        case WIFI_AUTH_WPA3_PSK:         return "WPA3_PSK";
-        case WIFI_AUTH_WPA2_WPA3_PSK:    return "WPA2_WPA3_PSK";
-        case WIFI_AUTH_WAPI_PSK:         return "WAPI_PSK";
-        case WIFI_AUTH_WPA3_ENT_192:    return "WPA3_ENT_192";
-        default:                        return "UNKNOWN";
-    }
-}
-
-// CSV-escape a field per RFC 4180. Returns "" for an empty input.
-String csvEscape(const String& field) {
-    if (field.length() == 0) {
-        return String("");
-    }
-    bool needs_quote = false;
-    for (size_t i = 0; i < field.length(); ++i) {
-        const char c = field.charAt(i);
-        if (c == ',' || c == '"' || c == '\n' || c == '\r') {
-            needs_quote = true;
-            break;
-        }
-    }
-    if (!needs_quote) {
-        return field;
-    }
-    String out;
-    out.reserve(field.length() + 2);
-    out += '"';
-    for (size_t i = 0; i < field.length(); ++i) {
-        const char c = field.charAt(i);
-        if (c == '"') {
-            out += "\"\"";  // double the inner quote
-        } else {
-            out += c;
-        }
-    }
-    out += '"';
-    return out;
-}
-
-// RSSI -> rough distance in meters (capped).
-inline float rssiToDistance(int32_t rssi_dbm) {
-    float dist = exp(static_cast<float>(-rssi_dbm - RSSI_REFERENCE_DBM) /
-                     DISTANCE_SCALE);
-    if (dist > DISTANCE_CAP_M) dist = DISTANCE_CAP_M;
-    if (dist < 0.0f)           dist = 0.0f;
-    return dist;
-}
-
-// Truncate a label to fit the spot_label buffer (no embedded NULs to surprise).
-void copyLabel(const String& src) {
-    size_t n = src.length();
-    if (n > SPOT_LABEL_MAX_LEN) n = SPOT_LABEL_MAX_LEN;
-    for (size_t i = 0; i < n; ++i) {
-        g_spot_label[i] = static_cast<char>(src.charAt(i));
-    }
-    g_spot_label[n] = '\0';
-}
-
 // Sample a non-empty serial line into g_spot_label. Returns true on update.
 bool readSerialLabel() {
     if (!Serial.available()) {
@@ -162,7 +89,7 @@ bool readSerialLabel() {
     if (line.length() == 0) {
         return false;
     }
-    copyLabel(line);
+    copyLabel(g_spot_label, sizeof(g_spot_label), line.c_str());
     ledAckBlink();
     Serial.printf("# label=\"%s\"\n", g_spot_label);
     Serial.flush();
@@ -211,18 +138,19 @@ void printApRow(uint16_t spot_id, const char* spot_label, uint32_t ts_ms,
     const uint8_t auth      = WiFi.encryptionType(index);
     const char*   auth_str  = authModeString(auth);
     const float   dist_m    = rssiToDistance(rssi);
-    const String  ssid_esc  = csvEscape(ssid);
+    char*         ssid_esc  = csvEscape(ssid.c_str());
 
     Serial.printf("%u,%s,%lu,%s,%s,%ld,%ld,%s,%.2f\n",
                   static_cast<unsigned>(spot_id),
                   spot_label,
                   static_cast<unsigned long>(ts_ms),
-                  ssid_esc.c_str(),
+                  ssid_esc,
                   bssid.c_str(),
                   static_cast<long>(rssi),
                   static_cast<long>(channel),
                   auth_str,
                   static_cast<double>(dist_m));
+    free(ssid_esc);
 }
 
 // Run one scan at the current spot and emit CSV rows to serial.
